@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>netstandard2.1</TargetFramework>
+      <LangVersion>12</LangVersion>
     <Description>Library to decompile Valve Source 2 files</Description>
     <PackageReleaseNotes>View release notes at https://github.com/ValveResourceFormat/ValveResourceFormat/releases</PackageReleaseNotes>
     <PackageIcon>vrf_library.png</PackageIcon>
@@ -17,7 +18,6 @@
     <PackageReference Include="ValveKeyValue" Version="0.9.0.267" />
     <PackageReference Include="ValvePak" Version="1.7.0.88" />
     <PackageReference Include="ZstdSharp.Port" Version="0.7.4" />
-    <PackageReference Include="KeyValues2" Version="0.3.0" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\Misc\VRF_PACKAGE_README.md" Pack="true" PackagePath="\README.md" />
