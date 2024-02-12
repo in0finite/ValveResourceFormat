@@ -36,9 +36,9 @@ namespace ValveResourceFormat.ResourceTypes.ModelAnimation.SegmentDecoders
             {
                 foreach (var j in wantedElements)
                 {
-                    DeltaData[pos++] = BitConverter.ToHalf(deltaData.Slice(i * stride * 3 + j * deltaElementSize * 3 + deltaElementSize * 0, deltaElementSize));
-                    DeltaData[pos++] = BitConverter.ToHalf(deltaData.Slice(i * stride * 3 + j * deltaElementSize * 3 + deltaElementSize * 1, deltaElementSize));
-                    DeltaData[pos++] = BitConverter.ToHalf(deltaData.Slice(i * stride * 3 + j * deltaElementSize * 3 + deltaElementSize * 2, deltaElementSize));
+                    DeltaData[pos++] = BitConverterUtils.ToHalf(deltaData.Slice(i * stride * 3 + j * deltaElementSize * 3 + deltaElementSize * 0, deltaElementSize));
+                    DeltaData[pos++] = BitConverterUtils.ToHalf(deltaData.Slice(i * stride * 3 + j * deltaElementSize * 3 + deltaElementSize * 1, deltaElementSize));
+                    DeltaData[pos++] = BitConverterUtils.ToHalf(deltaData.Slice(i * stride * 3 + j * deltaElementSize * 3 + deltaElementSize * 2, deltaElementSize));
                 }
             }
         }
