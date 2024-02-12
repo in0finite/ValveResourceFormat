@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
-      <LangVersion>12</LangVersion>
-      <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>12</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Description>Library to decompile Valve Source 2 files</Description>
     <PackageReleaseNotes>View release notes at https://github.com/ValveResourceFormat/ValveResourceFormat/releases</PackageReleaseNotes>
     <PackageIcon>vrf_library.png</PackageIcon>

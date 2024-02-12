@@ -2,7 +2,7 @@ using System.Text;
 
 namespace ValveResourceFormat
 {
-    internal static class DotNet4Extensions
+    public static class DotNet4Extensions
     {
         public const float Tau = 6.28318548f;
 

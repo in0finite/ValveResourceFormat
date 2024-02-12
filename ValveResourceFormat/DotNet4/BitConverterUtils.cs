@@ -1,6 +1,6 @@
 namespace ValveResourceFormat
 {
-    internal class BitConverterUtils
+    public class BitConverterUtils
     {
         public static Half ToHalf(ReadOnlySpan<byte> span)
         {
