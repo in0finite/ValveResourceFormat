@@ -22,7 +22,7 @@ namespace ValveResourceFormat.Compression
 
         public static void FastDecompress(CompressionInfo info, BinaryReader reader, Span<byte> result)
         {
-            ArgumentOutOfRangeException.ThrowIfLessThan(result.Length, info.Size);
+            DotNet4Extensions.ThrowIfLessThan(result.Length, info.Size);
 
             if (!info.IsCompressed)
             {

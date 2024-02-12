@@ -103,8 +103,8 @@ namespace ValveResourceFormat.ResourceTypes
                         var bundle = bundleData.Value as IKeyValueCollection;
                         var rectU = (int)Math.Round(bundle.GetFloatProperty("m_flULeftSrc") * texWidth, 0);
                         var rectV = (int)Math.Round(bundle.GetFloatProperty("m_flVTopSrc") * texHeight, 0);
-                        var ranges = new Vector4(bundle.GetFloatArray("m_ranges"));
-                        var offsets = new Vector4(bundle.GetFloatArray("m_offsets"));
+                        var ranges = DotNet4Extensions.Vec4FromSpan(bundle.GetFloatArray("m_ranges"));
+                        var offsets = DotNet4Extensions.Vec4FromSpan(bundle.GetFloatArray("m_offsets"));
 
                         for (var row = rectV; row < rectV + rectHeight; row++)
                         {

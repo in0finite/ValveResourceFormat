@@ -392,8 +392,8 @@ namespace ValveResourceFormat.ResourceTypes
         /// <returns>Skia bitmap.</returns>
         public SKBitmap GenerateBitmap(uint depth = 0, CubemapFace face = 0, uint mipLevel = 0)
         {
-            ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(depth, Depth, nameof(depth));
-            ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(mipLevel, NumMipLevels, nameof(mipLevel));
+            DotNet4Extensions.ThrowIfGreaterThanOrEqual(depth, Depth, nameof(depth));
+            DotNet4Extensions.ThrowIfGreaterThanOrEqual(mipLevel, NumMipLevels, nameof(mipLevel));
 
             if (face > 0)
             {
@@ -402,7 +402,7 @@ namespace ValveResourceFormat.ResourceTypes
                     throw new ArgumentException($"This is not a cubemap texture.", nameof(face));
                 }
 
-                ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual((int)face, 6, nameof(face));
+                DotNet4Extensions.ThrowIfGreaterThanOrEqual((int)face, 6, nameof(face));
             }
 
             var width = MipLevelSize(ActualWidth, mipLevel);

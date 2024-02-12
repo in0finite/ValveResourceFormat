@@ -12,9 +12,9 @@ namespace ValveResourceFormat.TextureDecoders
 
             for (var i = 0; i < span.Length; i++)
             {
-                var r = (float)BitConverter.ToHalf(input.Slice(offset, 2));
+                var r = (float)BitConverterUtils.ToHalf(input.Slice(offset, 2));
                 offset += 2;
-                var g = (float)BitConverter.ToHalf(input.Slice(offset, 2));
+                var g = (float)BitConverterUtils.ToHalf(input.Slice(offset, 2));
                 offset += 2;
 
                 span[i] = new SKColor(

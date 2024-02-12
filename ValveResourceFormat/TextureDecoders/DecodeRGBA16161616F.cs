@@ -12,9 +12,9 @@ namespace ValveResourceFormat.TextureDecoders
 
             for (int i = 0, j = 0; j < data.Length; i += 8, j++)
             {
-                var hr = (float)BitConverter.ToHalf(input.Slice(i, 2));
-                var hg = (float)BitConverter.ToHalf(input.Slice(i + 2, 2));
-                var hb = (float)BitConverter.ToHalf(input.Slice(i + 4, 2));
+                var hr = (float)BitConverterUtils.ToHalf(input.Slice(i, 2));
+                var hg = (float)BitConverterUtils.ToHalf(input.Slice(i + 2, 2));
+                var hb = (float)BitConverterUtils.ToHalf(input.Slice(i + 4, 2));
                 var lum = (hr * 0.299f) + (hg * 0.587f) + (hb * 0.114f);
                 log += MathF.Log(MathF.Max(float.Epsilon, lum));
             }
@@ -23,10 +23,10 @@ namespace ValveResourceFormat.TextureDecoders
 
             for (int i = 0, j = 0; j < data.Length; i += 8, j++)
             {
-                var hr = (float)BitConverter.ToHalf(input.Slice(i, 2));
-                var hg = (float)BitConverter.ToHalf(input.Slice(i + 2, 2));
-                var hb = (float)BitConverter.ToHalf(input.Slice(i + 4, 2));
-                var ha = (float)BitConverter.ToHalf(input.Slice(i + 6, 2));
+                var hr = (float)BitConverterUtils.ToHalf(input.Slice(i, 2));
+                var hg = (float)BitConverterUtils.ToHalf(input.Slice(i + 2, 2));
+                var hb = (float)BitConverterUtils.ToHalf(input.Slice(i + 4, 2));
+                var ha = (float)BitConverterUtils.ToHalf(input.Slice(i + 6, 2));
 
                 var y = (hr * 0.299f) + (hg * 0.587f) + (hb * 0.114f);
                 var u = (hb - y) * 0.565f;

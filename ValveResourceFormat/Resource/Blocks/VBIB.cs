@@ -273,7 +273,7 @@ namespace ValveResourceFormat.Blocks
 
                         for (var i = 0; i < vertexBuffer.ElementCount; i++)
                         {
-                            result[i] = new Vector2((float)BitConverter.ToHalf(vertexBuffer.Data, offset), (float)BitConverter.ToHalf(vertexBuffer.Data, offset + 2));
+                            result[i] = new Vector2((float)BitConverterUtils.ToHalf(vertexBuffer.Data, offset), (float)BitConverterUtils.ToHalf(vertexBuffer.Data, offset + 2));
 
                             offset += (int)vertexBuffer.ElementSizeInBytes;
                         }
@@ -357,10 +357,10 @@ namespace ValveResourceFormat.Blocks
                         for (var i = 0; i < vertexBuffer.ElementCount; i++)
                         {
                             result[i] = new Vector4(
-                                (float)BitConverter.ToHalf(vertexBuffer.Data, offset),
-                                (float)BitConverter.ToHalf(vertexBuffer.Data, offset + 2),
-                                (float)BitConverter.ToHalf(vertexBuffer.Data, offset + 4),
-                                (float)BitConverter.ToHalf(vertexBuffer.Data, offset + 6)
+                                (float)BitConverterUtils.ToHalf(vertexBuffer.Data, offset),
+                                (float)BitConverterUtils.ToHalf(vertexBuffer.Data, offset + 2),
+                                (float)BitConverterUtils.ToHalf(vertexBuffer.Data, offset + 4),
+                                (float)BitConverterUtils.ToHalf(vertexBuffer.Data, offset + 6)
                             );
 
                             offset += (int)vertexBuffer.ElementSizeInBytes;
@@ -685,7 +685,7 @@ namespace ValveResourceFormat.Blocks
                 // But it doesn't line up with the texcoords. For that, it uses nPackedFrameT, which is the rotation.
 
                 // Angle to use to rotate tangent
-                var nPackedFrameT = Tbits / 2047.0f * MathF.Tau;
+                var nPackedFrameT = Tbits / 2047.0f * DotNet4Extensions.Tau;
 
                 // Rotate tangent to the correct angle that aligns with texcoords.
                 var tangent = unalignedTangent * MathF.Cos(nPackedFrameT) + Vector3.Cross(normal, unalignedTangent) * MathF.Sin(nPackedFrameT);

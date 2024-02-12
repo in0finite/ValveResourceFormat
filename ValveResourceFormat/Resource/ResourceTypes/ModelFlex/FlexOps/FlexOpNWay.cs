@@ -24,7 +24,7 @@ namespace ValveResourceFormat.ResourceTypes.ModelFlex.FlexOps
             }
             else if (tCurrent < t2)
             {
-                outValue = float.Lerp(0, value, (tCurrent - t1) / (t2 - t1));
+                outValue = DotNet4Extensions.FloatLerp(0, value, (tCurrent - t1) / (t2 - t1));
             }
             else if (tCurrent < t3)
             {
@@ -32,7 +32,7 @@ namespace ValveResourceFormat.ResourceTypes.ModelFlex.FlexOps
             }
             else if (tCurrent < t4)
             {
-                outValue = float.Lerp(value, 0, (tCurrent - t3) / (t4 - t3));
+                outValue = DotNet4Extensions.FloatLerp(value, 0, (tCurrent - t3) / (t4 - t3));
             }
             else
             {

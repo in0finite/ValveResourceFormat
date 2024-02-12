@@ -68,7 +68,7 @@ namespace ValveResourceFormat.ResourceTypes.ModelAnimation
                 var frame1Data = frame1.Datas[i];
                 var frame2Data = frame2.Datas[i];
 
-                InterpolatedFrame.Datas[i] = float.Lerp(frame1Data, frame2Data, t);
+                InterpolatedFrame.Datas[i] = DotNet4Extensions.FloatLerp(frame1Data, frame2Data, t);
             }
 
             return InterpolatedFrame;
