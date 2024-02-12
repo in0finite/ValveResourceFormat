@@ -10,7 +10,7 @@ namespace ValveResourceFormat.ResourceTypes
         private readonly BlockType KVBlockType;
         public override BlockType Type => KVBlockType;
 
-        protected Resource Resource { get; private set; }
+        public Resource Resource { get; private set; }
         public IKeyValueCollection Data { get; private set; }
         public bool UpgradeToKV3 { get; private set; }
 

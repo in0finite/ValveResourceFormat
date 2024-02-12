@@ -371,7 +371,7 @@ namespace ValveResourceFormat.ResourceTypes
         public bool IsRawJpeg => Format is VTexFormat.JPEG_DXT5 or VTexFormat.JPEG_RGBA8888;
         public bool IsRawPng => Format is VTexFormat.PNG_DXT5 or VTexFormat.PNG_RGBA8888;
 
-        internal byte[] ReadRawImageData()
+        public byte[] ReadRawImageData()
         {
             if (IsRawPng || IsRawJpeg)
             {
