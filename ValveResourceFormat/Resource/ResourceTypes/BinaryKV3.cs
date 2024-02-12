@@ -45,6 +45,8 @@ namespace ValveResourceFormat.ResourceTypes
         private bool isUsingLinearFlagTypes; // Version KV3\x03 uses a different enum for mapping flags
         private bool todoUnknownNewBytesInVersion4;
 
+        public static Action<byte[], int, byte[], int> ZstdDecompressionFunc;
+
         public BinaryKV3()
         {
             KVBlockType = BlockType.DATA;
@@ -377,9 +379,16 @@ namespace ValveResourceFormat.ResourceTypes
                         var input = inputBuf.AsSpan(0, (int)compressedSize);
                         reader.Read(input);
 
-                        if (!zstd.TryUnwrap(input, output, out var written) || outBufferLength != written)
+                        if (ZstdDecompressionFunc != null)
                         {
-                            throw new InvalidDataException($"Failed to decompress zstd correctly (written {written} bytes, expected {outBufferLength} bytes)");
+                            ZstdDecompressionFunc(inputBuf, (int)compressedSize, outputBuf, outBufferLength);
+                        }
+                        else
+                        {
+                            if (!zstd.TryUnwrap(input, output, out var written) || outBufferLength != written)
+                            {
+                                throw new InvalidDataException($"Failed to decompress zstd correctly (written {written} bytes, expected {outBufferLength} bytes)");
+                            }
                         }
                     }
                     finally
