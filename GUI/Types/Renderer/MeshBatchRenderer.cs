@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using GUI.Utils;
 using OpenTK.Graphics.OpenGL;
@@ -6,6 +7,7 @@ namespace GUI.Types.Renderer
 {
     static class MeshBatchRenderer
     {
+        [DebuggerDisplay("{Node.DebugName,nq}")]
         public struct Request
         {
             public Matrix4x4 Transform;
@@ -18,12 +20,7 @@ namespace GUI.Types.Renderer
 
         public static int ComparePipeline(Request a, Request b)
         {
-            if (a.Call.Material.Shader.Program == b.Call.Material.Shader.Program)
-            {
-                return a.Call.Material.SortId - b.Call.Material.SortId;
-            }
-
-            return a.Call.Material.Shader.Program - b.Call.Material.Shader.Program;
+            return a.Call.Material.SortId - b.Call.Material.SortId;
         }
 
         public static int CompareRenderOrderThenPipeline(Request a, Request b)
@@ -76,6 +73,7 @@ namespace GUI.Types.Renderer
             public int ShaderId = -1;
             public int ShaderProgramId = -1;
             public int CubeMapArrayIndices = -1;
+            public int CubeMapArrayLength = -1;
             public int MorphCompositeTexture = -1;
             public int MorphCompositeTextureSize = -1;
             public int MorphVertexIdOffset = -1;
@@ -86,6 +84,7 @@ namespace GUI.Types.Renderer
         private ref struct Config
         {
             public bool NeedsCubemapBinding;
+            public int LightmapGameVersionNumber;
             public Scene.LightProbeType LightProbeType;
         }
 
@@ -115,6 +114,7 @@ namespace GUI.Types.Renderer
             Config config = new()
             {
                 NeedsCubemapBinding = context.Scene.LightingInfo.CubemapType == Scene.CubemapType.IndividualCubemaps,
+                LightmapGameVersionNumber = context.Scene.LightingInfo.LightmapGameVersionNumber,
                 LightProbeType = context.Scene.LightingInfo.LightProbeType,
             };
 
@@ -126,11 +126,13 @@ namespace GUI.Types.Renderer
                     GL.BindVertexArray(vao);
                 }
 
-                if (material != request.Call.Material)
+                var requestMaterial = request.Call.Material;
+
+                if (material != requestMaterial)
                 {
                     material?.PostRender();
 
-                    var requestShader = context.ReplacementShader ?? request.Call.Material.Shader;
+                    var requestShader = context.ReplacementShader ?? requestMaterial.Shader;
 
                     // If the material did not change, shader could not have changed
                     if (shader != requestShader)
@@ -148,6 +150,8 @@ namespace GUI.Types.Renderer
                         {
                             uniforms.EnvmapTexture = shader.GetUniformLocation("g_tEnvironmentMap");
                             uniforms.CubeMapArrayIndices = shader.GetUniformLocation("g_iEnvMapArrayIndices");
+                            uniforms.CubeMapArrayLength = shader.GetUniformLocation("g_iEnvMapArrayLength");
+
                         }
 
                         if (shader.Parameters.ContainsKey("F_MORPH_SUPPORTED"))
@@ -182,10 +186,9 @@ namespace GUI.Types.Renderer
                         }
 
                         context.Scene.LightingInfo.SetLightmapTextures(shader);
-                        context.Scene.FogInfo.SetCubemapFogTexture(shader);
                     }
 
-                    material = request.Call.Material;
+                    material = requestMaterial;
                     material.Render(shader);
                 }
 
@@ -226,23 +229,27 @@ namespace GUI.Types.Renderer
                 }
                 else
                 {
+                    GL.ProgramUniform1(shader.Program, uniforms.CubeMapArrayLength, request.Node.EnvMapIds.Length);
                     GL.ProgramUniform1(shader.Program, uniforms.CubeMapArrayIndices, request.Node.EnvMapIds.Length, request.Node.EnvMapIds);
                 }
             }
 
-            if (uniforms.LightProbeVolumeData != -1 && request.Node.LightProbeBinding != null)
+            if (uniforms.LightProbeVolumeData != -1 && request.Node.LightProbeBinding is { } lightProbe)
             {
-                var lightProbe = request.Node.LightProbeBinding;
                 lightProbe.SetGpuProbeData(config.LightProbeType == Scene.LightProbeType.ProbeAtlas);
 
-                if (config.LightProbeType < Scene.LightProbeType.ProbeAtlas)
+                if (config.LightProbeType == Scene.LightProbeType.IndividualProbes)
                 {
                     SetInstanceTexture(shader, ReservedTextureSlots.Probe1, uniforms.LPVIrradianceTexture, lightProbe.Irradiance);
 
-                    if (config.LightProbeType > Scene.LightProbeType.IndividualProbesIrradianceOnly)
+                    if (config.LightmapGameVersionNumber == 1)
                     {
                         SetInstanceTexture(shader, ReservedTextureSlots.Probe2, uniforms.LPVIndicesTexture, lightProbe.DirectLightIndices);
                         SetInstanceTexture(shader, ReservedTextureSlots.Probe3, uniforms.LPVScalarsTexture, lightProbe.DirectLightScalars);
+                    }
+                    else if (request.Node.Scene.LightingInfo.LightmapGameVersionNumber == 2)
+                    {
+                        SetInstanceTexture(shader, ReservedTextureSlots.Probe2, uniforms.LPVShadowsTexture, lightProbe.DirectLightShadows);
                     }
                 }
             }

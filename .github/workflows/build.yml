@@ -177,6 +177,7 @@ jobs:
 
     - name: Create release files
       run: |
+       set -eux
        mkdir release
        chmod +x artifacts/Decompiler-linux-x64/Decompiler
        chmod +x artifacts/Decompiler-linux-arm/Decompiler
@@ -190,16 +191,19 @@ jobs:
        zip -9j release/Decompiler-macos-x64.zip artifacts/Decompiler-macos-x64/*
        zip -9j release/Decompiler-macos-arm64.zip artifacts/Decompiler-macos-arm64/*
        mv artifacts/Source2Viewer/Source2Viewer.exe release/
-       mv artifacts/nupkg/*.nupkg release/
+       mv artifacts/nupkg/ValveResourceFormat.*.nupkg release/ValveResourceFormat.nupkg
 
     - name: Display structure of archived files
       run: ls -Rl
       working-directory: release
 
     - name: Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         draft: true
         files: release/*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Publish to NuGet Gallery
+      run: dotnet nuget push release/ValveResourceFormat.nupkg --api-key "${{ secrets.NUGET_API_KEY }}" --source "https://api.nuget.org/v3/index.json"

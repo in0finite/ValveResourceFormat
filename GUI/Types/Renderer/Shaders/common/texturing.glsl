@@ -2,6 +2,7 @@
 //? #include "LightingConstants.glsl"
 //? #include "features.glsl"
 //? #include "utils.glsl"
+//? #include "fullbright.glsl"
 
 #if defined(NEED_CURVATURE) && (F_USE_PER_VERTEX_CURVATURE == 0)
     // Expensive, only used in skin shaders
@@ -88,7 +89,7 @@ struct MaterialProperties_t
     float Curvature;
 #endif
 
-#if (F_ANISOTROPIC_GLOSS == 1)
+#if defined(VEC2_ROUGHNESS)
     vec3 AnisotropicTangent;
     vec3 AnisotropicBitangent;
 #endif
@@ -140,7 +141,7 @@ void InitProperties(out MaterialProperties_t mat, vec3 GeometricNormal)
     #endif
 #endif
 
-#if (F_ANISOTROPIC_GLOSS == 1)
+#if defined(VEC2_ROUGHNESS)
     mat.AnisotropicTangent = vec3(0.0);
     mat.AnisotropicBitangent = vec3(0.0);
 #endif
@@ -194,27 +195,6 @@ vec3 SwitchCentroidNormal(vec3 vNormalWs, vec3 vCentroidNormalWs)
     return ( dot(vNormalWs, vNormalWs) >= 1.01 ) ? vCentroidNormalWs : vNormalWs;
 }
 
-
-// Unpack HemiOct normal map
-vec3 DecodeNormal(vec4 bumpNormal)
-{
-    //Reconstruct the tangent vector from the map
-#if (HemiOctIsoRoughness_RG_B == 1)
-    vec2 temp = vec2(bumpNormal.x + bumpNormal.y - 1.003922, bumpNormal.x - bumpNormal.y);
-    vec3 tangentNormal = oct_to_float32x3(temp);
-#else
-    //vec2 temp = vec2(bumpNormal.w, bumpNormal.y) * 2 - 1;
-    //vec3 tangentNormal = vec3(temp, sqrt(1 - temp.x * temp.x - temp.y * temp.y));
-    vec2 temp = vec2(bumpNormal.w + bumpNormal.y - 1.003922, bumpNormal.w - bumpNormal.y);
-    vec3 tangentNormal = oct_to_float32x3(temp);
-#endif
-
-    // This is free, it gets compiled into the TS->WS matrix mul
-    tangentNormal.y = -tangentNormal.y;
-
-    return tangentNormal;
-}
-
 //Calculate the normal of this fragment in world space
 vec3 calculateWorldNormal(vec3 normalMap, vec3 normal, vec3 tangent, vec3 bitangent)
 {
@@ -231,8 +211,8 @@ vec3 calculateWorldNormal(vec3 normalMap, vec3 normal, vec3 tangent, vec3 bitang
 
     void GetBentNormal(inout MaterialProperties_t mat, vec2 texCoords)
     {
-        vec3 bentNormalTexel = DecodeNormal( texture(g_tBentNormal, texCoords) );
-        mat.AmbientGeometricNormal = calculateWorldNormal(bentNormalTexel, mat.GeometricNormal, mat.Tangent, mat.Bitangent);
+        vec3 vBentNormalTs = DecodeHemiOctahedronNormal(texture(g_tBentNormal, texCoords).xy);
+        mat.AmbientGeometricNormal = calculateWorldNormal(vBentNormalTs, mat.GeometricNormal, mat.Tangent, mat.Bitangent);
 
         // this is how they blend in the bent normal; by re-converting the normal map to tangent space using the bent geo normal
         mat.AmbientNormal = calculateWorldNormal(mat.NormalMap, mat.AmbientGeometricNormal, mat.Tangent, mat.Bitangent);
@@ -316,7 +296,7 @@ void applyDetailTexture(inout vec3 Albedo, inout vec3 NormalMap, vec2 detailMask
 
     // NORMALS
     #if (DETAIL_NORMALS)
-        vec3 DetailNormal = DecodeNormal(texture(g_tNormalDetail, vDetailTexCoords));
+        vec3 DetailNormal = DecodeHemiOctahedronNormal(texture(g_tNormalDetail, vDetailTexCoords).xy);
         DetailNormal = mix(vec3(0, 0, 1), DetailNormal, detailMask * g_flDetailNormalStrength);
         // literally i dont even know
         NormalMap = NormalMap * DetailNormal.z + vec3(NormalMap.z * DetailNormal.z * DetailNormal.xy, 0.0);
@@ -386,3 +366,77 @@ void applyDetailTexture(inout vec3 Albedo, inout vec3 NormalMap, vec2 detailMask
         }
     }
 #endif
+
+// Render modes
+#define renderMode_FullBright 0
+#define renderMode_Color 0
+#define renderMode_BumpMap 0
+#define renderMode_Tangents 0
+#define renderMode_Normals 0
+#define renderMode_BumpNormals 0
+#define renderMode_Occlusion 0
+#define renderMode_Roughness 0
+#define renderMode_Metalness 0
+#define renderMode_ExtraParams 0
+
+bool HandleMaterialRenderModes(MaterialProperties_t mat, inout vec4 outputColor)
+{
+    if (g_iRenderMode == renderMode_FullBright)
+    {
+        vec3 fullbrightLighting = CalculateFullbrightLighting(mat.Albedo, mat.Normal, mat.ViewDir);
+        outputColor.rgb = SrgbLinearToGamma(fullbrightLighting);
+        return true;
+    }
+    else if (g_iRenderMode == renderMode_Color)
+    {
+        outputColor = vec4(SrgbLinearToGamma(mat.Albedo), 1.0);
+        return true;
+    }
+    else if (g_iRenderMode == renderMode_BumpMap)
+    {
+        outputColor = vec4(PackToColor(mat.NormalMap), 1.0);
+        return true;
+    }
+    else if (g_iRenderMode == renderMode_Tangents)
+    {
+        outputColor = vec4(PackToColor(mat.Tangent), 1.0);
+        return true;
+    }
+    else if (g_iRenderMode == renderMode_Normals)
+    {
+        outputColor = vec4(PackToColor(mat.GeometricNormal), 1.0);
+        return true;
+    }
+    else if (g_iRenderMode == renderMode_BumpNormals)
+    {
+        outputColor = vec4(PackToColor(mat.Normal), 1.0);
+        return true;
+    }
+    else if (g_iRenderMode == renderMode_Occlusion)
+    {
+        outputColor.rgb = mat.AmbientOcclusion.xxx;
+        return true;
+    }
+    else if (g_iRenderMode == renderMode_Roughness)
+    {
+        #if defined(VEC2_ROUGHNESS)
+            outputColor.rgb = vec3(mat.RoughnessTex.xy, 0.0);
+        #else
+            outputColor.rgb = mat.RoughnessTex.xxx;
+        #endif
+
+        return true;
+    }
+    else if (g_iRenderMode == renderMode_Metalness)
+    {
+        outputColor.rgb = mat.Metalness.xxx;
+        return true;
+    }
+    else if (g_iRenderMode == renderMode_ExtraParams)
+    {
+        outputColor.rgb = mat.ExtraParams.rgb;
+        return true;
+    }
+
+    return false;
+}

@@ -7,7 +7,7 @@ using GUI.Types.ParticleRenderer.Renderers;
 using GUI.Types.Renderer;
 using GUI.Utils;
 using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.Serialization;
+using ValveResourceFormat.Serialization.KeyValues;
 
 namespace GUI.Types.ParticleRenderer
 {
@@ -89,6 +89,7 @@ namespace GUI.Types.ParticleRenderer
             SetupEmitters(particleSystem.GetEmitters());
             SetupInitializers(particleSystem.GetInitializers());
             SetupOperators(particleSystem.GetOperators());
+            SetupForceGenerators(particleSystem.GetForceGenerators());
             SetupRenderers(particleSystem.GetRenderers());
             SetupPreEmissionOperators(particleSystem.GetPreEmissionOperators());
 
@@ -334,7 +335,7 @@ namespace GUI.Types.ParticleRenderer
             LocalBoundingBox = newBounds;
         }
 
-        private void SetupEmitters(IEnumerable<IKeyValueCollection> emitterData)
+        private void SetupEmitters(IEnumerable<KVObject> emitterData)
         {
             foreach (var emitterInfo in emitterData)
             {
@@ -355,7 +356,7 @@ namespace GUI.Types.ParticleRenderer
             }
         }
 
-        private void SetupInitializers(IEnumerable<IKeyValueCollection> initializerData)
+        private void SetupInitializers(IEnumerable<KVObject> initializerData)
         {
             foreach (var initializerInfo in initializerData)
             {
@@ -376,7 +377,7 @@ namespace GUI.Types.ParticleRenderer
             }
         }
 
-        private void SetupOperators(IEnumerable<IKeyValueCollection> operatorData)
+        private void SetupOperators(IEnumerable<KVObject> operatorData)
         {
             foreach (var operatorInfo in operatorData)
             {
@@ -397,7 +398,28 @@ namespace GUI.Types.ParticleRenderer
             }
         }
 
-        private void SetupRenderers(IEnumerable<IKeyValueCollection> rendererData)
+        private void SetupForceGenerators(IEnumerable<KVObject> forceGeneratorData)
+        {
+            foreach (var forceGenerator in forceGeneratorData)
+            {
+                if (IsOperatorDisabled(forceGenerator))
+                {
+                    continue;
+                }
+
+                var operatorClass = forceGenerator.GetProperty<string>("_class");
+                if (ParticleControllerFactory.TryCreateForceGenerator(operatorClass, forceGenerator, out var @operator))
+                {
+                    Operators.Add(@operator);
+                }
+                else
+                {
+                    Log.Warn(nameof(ParticleRenderer), $"Unsupported force generator class '{operatorClass}'.");
+                }
+            }
+        }
+
+        private void SetupRenderers(IEnumerable<KVObject> rendererData)
         {
             foreach (var rendererInfo in rendererData)
             {
@@ -417,7 +439,7 @@ namespace GUI.Types.ParticleRenderer
                 }
             }
         }
-        private void SetupPreEmissionOperators(IEnumerable<IKeyValueCollection> preEmissionOperatorData)
+        private void SetupPreEmissionOperators(IEnumerable<KVObject> preEmissionOperatorData)
         {
             foreach (var preEmissionOperatorInfo in preEmissionOperatorData)
             {
@@ -459,7 +481,7 @@ namespace GUI.Types.ParticleRenderer
             }
         }
 
-        private static bool IsOperatorDisabled(IKeyValueCollection op)
+        private static bool IsOperatorDisabled(KVObject op)
         {
             var parse = new ParticleDefinitionParser(op);
 

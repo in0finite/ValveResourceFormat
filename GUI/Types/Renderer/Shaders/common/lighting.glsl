@@ -6,6 +6,8 @@
 //? #include "texturing.glsl"
 //? #include "pbr.glsl"
 
+#define SCENE_PROBE_TYPE 0 // 1 = Individual, 2 = Atlas
+
 #if (D_BAKED_LIGHTING_FROM_LIGHTMAP == 1)
     in vec3 vLightmapUVScaled;
     uniform sampler2DArray g_tIrradiance;
@@ -16,8 +18,6 @@
     #elif (LightmapGameVersionNumber == 2)
         uniform sampler2DArray g_tDirectLightShadows;
     #endif
-#elif (D_BAKED_LIGHTING_FROM_VERTEX_STREAM == 1)
-    in vec3 vPerVertexLightingOut;
 #elif (D_BAKED_LIGHTING_FROM_PROBE == 1)
 
     uniform sampler3D g_tLPV_Irradiance;
@@ -32,12 +32,10 @@
     layout(std140, binding = 2) uniform LightProbeVolume
     {
         uniform mat4 g_matLightProbeVolumeWorldToLocal;
-        //uniform vec4 g_vLightProbeVolumeColor;
-
-        #if (LightmapGameVersionNumber == 1)
+        #if (SCENE_PROBE_TYPE == 1)
             vec4 g_vLightProbeVolumeLayer0TextureMin;
             vec4 g_vLightProbeVolumeLayer0TextureMax;
-        #elif (LightmapGameVersionNumber == 2)
+        #elif (SCENE_PROBE_TYPE == 2)
             vec4 g_vLightProbeVolumeBorderMin;
             vec4 g_vLightProbeVolumeBorderMax;
             vec4 g_vLightProbeVolumeAtlasScale;
@@ -51,18 +49,25 @@
         return vLightProbeLocalPos;
     }
 
-    #if (LightmapGameVersionNumber == 2)
-        vec3 CalculateAtlasProbeShadowCoords(vec3 fragPosition)
-        {
-            vec3 vLightProbeLocalPos = CalculateProbeSampleCoords(fragPosition);
+    vec3 CalculateProbeShadowCoords(vec3 fragPosition)
+    {
+        vec3 vLightProbeLocalPos = CalculateProbeSampleCoords(fragPosition);
 
-            return fma(saturate(vLightProbeLocalPos), g_vLightProbeVolumeAtlasScale.xyz, g_vLightProbeVolumeAtlasOffset.xyz);
-        }
+        #if (SCENE_PROBE_TYPE == 2)
+            vLightProbeLocalPos = fma(saturate(vLightProbeLocalPos), g_vLightProbeVolumeAtlasScale.xyz, g_vLightProbeVolumeAtlasOffset.xyz);
+        #endif
 
-        vec3 CalculateAtlasProbeIndirectCoords(vec3 fragPosition)
-        {
-            vec3 indirectCoords = CalculateProbeSampleCoords(fragPosition);
+        return vLightProbeLocalPos;
+    }
 
+    vec3 CalculateProbeIndirectCoords(vec3 fragPosition)
+    {
+        vec3 indirectCoords = CalculateProbeSampleCoords(fragPosition);
+
+        #if (SCENE_PROBE_TYPE == 1)
+            indirectCoords.z /= 6;
+            // clamp(indirectCoords, g_vLightProbeVolumeLayer0TextureMin.xyz, g_vLightProbeVolumeLayer0TextureMax.xyz);
+        #elif (SCENE_PROBE_TYPE == 2)
             indirectCoords.z /= 6;
             indirectCoords = clamp(indirectCoords, g_vLightProbeVolumeBorderMin.xyz, g_vLightProbeVolumeBorderMax.xyz);
 
@@ -70,82 +75,174 @@
             indirectCoords = fma(indirectCoords, g_vLightProbeVolumeAtlasScale.xyz, g_vLightProbeVolumeAtlasOffset.xyz);
 
             indirectCoords.z /= 6;
-            return indirectCoords;
-        }
-    #endif
+        #endif
+
+        return indirectCoords;
+    }
+#elif (D_BAKED_LIGHTING_FROM_VERTEX_STREAM == 1)
+    in vec3 vPerVertexLightingOut;
 #endif
 
-vec3 getSunDir()
+uniform sampler2DShadow g_tShadowDepthBufferDepth;
+
+float CalculateSunShadowMapVisibility(vec3 vPosition)
 {
-    return -normalize(mat3(vLightPosition) * vec3(-1, 0, 0));
+    vec4 projCoords = g_matWorldToShadow * vec4(vPosition, 1.0);
+    projCoords.xyz /= projCoords.w;
+
+    vec2 shadowCoords = clamp(projCoords.xy * 0.5 + 0.5, vec2(-1), vec2(2));
+
+    // Note: Bias is added of clamp, so that the value is never zero (or negative)
+    // as the comparison with <= 0 values produces shadow
+    float currentDepth = saturate(projCoords.z) + g_flSunShadowBias;
+
+    // To skip PCF
+    // return 1 - textureLod(g_tShadowDepthBufferDepth, vec3(shadowCoords, currentDepth), 0).r;
+
+    float shadow = 0.0;
+    vec2 texelSize = 1.0 / textureSize(g_tShadowDepthBufferDepth, 0);
+    for(int x = -1; x <= 1; ++x)
+    {
+        for(int y = -1; y <= 1; ++y)
+        {
+            float pcfDepth = textureLod(g_tShadowDepthBufferDepth, vec3(shadowCoords + vec2(x, y) * texelSize, currentDepth), 0).r;
+            shadow += pcfDepth;
+        }
+    }
+
+    shadow /= 9.0;
+    return 1 - shadow;
 }
 
-vec3 getSunColor()
+vec3 GetEnvLightDirection(uint nLightIndex)
 {
-    return SrgbGammaToLinear(vLightColor.rgb) * vLightColor.a;
+    return normalize(mat3(g_matLightToWorld[nLightIndex]) * vec3(-1, 0, 0));
 }
 
+vec3 GetLightPositionWs(uint nLightIndex)
+{
+    return g_vLightPosition_Type[nLightIndex].xyz;
+}
 
-// This should contain our direct lighting loop
+bool IsDirectionalLight(uint nLightIndex)
+{
+    return g_vLightPosition_Type[nLightIndex].a == 0.0;
+}
+
+vec3 GetLightDirection(vec3 vPositionWs, uint nLightIndex)
+{
+    if (IsDirectionalLight(nLightIndex))
+    {
+        return GetEnvLightDirection(nLightIndex);
+    }
+
+    vec3 lightPosition = GetLightPositionWs(nLightIndex);
+    vec3 lightVector = normalize(lightPosition - vPositionWs);
+
+    return lightVector;
+}
+
+vec3 GetLightColor(uint nLightIndex)
+{
+    vec3 vColor = g_vLightColor_Brightness[nLightIndex].rgb;
+    float flBrightness = g_vLightColor_Brightness[nLightIndex].a;
+
+    return vColor * flBrightness;
+}
+
 void CalculateDirectLighting(inout LightingTerms_t lighting, inout MaterialProperties_t mat)
 {
-    vec3 lightVector = normalize(-getSunDir());
-
-    // Lighting
-    float visibility = 1.0;
+    const float MIN_ALPHA = 0.0001;
 
     #if (LightmapGameVersionNumber == 1)
         #if (D_BAKED_LIGHTING_FROM_LIGHTMAP == 1)
             vec4 dls = texture(g_tDirectLightStrengths, vLightmapUVScaled);
             vec4 dli = texture(g_tDirectLightIndices, vLightmapUVScaled);
         #elif (D_BAKED_LIGHTING_FROM_PROBE == 1)
-            vec3 vLightProbeShadowCoords = CalculateProbeSampleCoords(mat.PositionWS);
+            vec3 vLightProbeShadowCoords = CalculateProbeShadowCoords(mat.PositionWS);
             vec4 dls = textureLod(g_tLPV_Scalars, vLightProbeShadowCoords, 0.0);
-            //vec4 dli = textureLod(g_tLPV_Indices, vLightProbeShadowCoords, 0.0);
-            vec4 dli = vec4(0.12, 0.34, 0.56, 0); // Indices aren't working right now, just assume sun is in alpha.
+            vec4 dli = textureLod(g_tLPV_Indices, vLightProbeShadowCoords, 0.0);
         #else
             vec4 dls = vec4(1, 0, 0, 0);
             vec4 dli = vec4(0, 0, 0, 0);
         #endif
 
-        //lighting.DiffuseDirect = dls.arg;
+        vec4 vLightStrengths = pow2(dls);
+        uvec4 vLightIndices = uvec4(dli * 255.0);
+
+        //const uint testIndex = 35;
+        //lighting.DiffuseDirect = vec3(any(equal(vLightIndices.xyw, uvec3(testIndex)))) + ((vLightIndices.z == testIndex) ? vec3(1) : vec3(0));
+        //lighting.DiffuseDirect *= vLightStrengths.xyw;
         //return;
 
-        vec4 vLightStrengths = pow2(dls);
-        ivec4 vLightIndices = ivec4(dli * 255.0);
-        visibility = 0.0;
-
-        int index = 0;
         for (int i = 0; i < 4; i++)
         {
-            if (vLightIndices[i] != index)
+            float visibility = vLightStrengths[i];
+            if (visibility <= MIN_ALPHA)
+            {
                 continue;
+            }
 
-            visibility = vLightStrengths[i];
-            break;
+            uint uLightIndex = vLightIndices[i];
+            bool bLightmapBakedDirectDiffuse = true;
+
+            if (IsDirectionalLight(uLightIndex))
+            {
+                bLightmapBakedDirectDiffuse = false;
+                visibility *= CalculateSunShadowMapVisibility(mat.PositionWS);
+            }
+
+            if (visibility > MIN_ALPHA)
+            {
+                vec3 lightVector = GetLightDirection(mat.PositionWS, uLightIndex);
+                vec3 lightColor = GetLightColor(uLightIndex);
+
+                vec3 previousDiffuse = lighting.DiffuseDirect;
+                CalculateShading(lighting, lightVector, visibility * lightColor, mat);
+
+                if (D_BAKED_LIGHTING_FROM_LIGHTMAP == 1 && bLightmapBakedDirectDiffuse)
+                {
+                    lighting.DiffuseDirect = previousDiffuse + (visibility * lightColor);
+                }
+            }
         }
 
     #elif (LightmapGameVersionNumber == 2)
+        vec4 dlsh = vec4(1, 1, 1, 1);
+
         #if (D_BAKED_LIGHTING_FROM_LIGHTMAP == 1)
-            vec4 dlsh = texture(g_tDirectLightShadows, vLightmapUVScaled);
+            dlsh = textureLod(g_tDirectLightShadows, vLightmapUVScaled, 0.0);
         #elif (D_BAKED_LIGHTING_FROM_PROBE == 1)
-            vec3 vLightProbeShadowCoords = CalculateAtlasProbeShadowCoords(mat.PositionWS);
-            vec4 dlsh = textureLod(g_tLPV_Shadows, vLightProbeShadowCoords, 0.0);
-            //if (sin(g_flTime * 3) > 0)
-            //    dlsh = vec4(0);
-        #else
-            vec4 dlsh = vec4(1, 0, 0, 0);
+            vec3 vLightProbeShadowCoords = CalculateProbeShadowCoords(mat.PositionWS);
+            dlsh = textureLod(g_tLPV_Shadows, vLightProbeShadowCoords, 0.0);
         #endif
 
-        int index = 0;
-        visibility = 1.0 - dlsh[index];
+        const uint uLightIndex = 0;
+
+        float visibility = 1.0 - dlsh[uLightIndex];
+
+        if (visibility > MIN_ALPHA && uLightIndex == 0)
+        {
+            visibility *= CalculateSunShadowMapVisibility(mat.PositionWS);
+        }
+
+        if (visibility > MIN_ALPHA)
+        {
+            vec3 lightColor = GetLightColor(uLightIndex);
+            vec3 lightVector = GetLightDirection(mat.PositionWS, uLightIndex);
+            CalculateShading(lighting, lightVector, visibility * lightColor, mat);
+        }
+    #else
+        // Non lightmapped scene
+        const uint uLightIndex = 0;
+        vec3 lightColor = GetLightColor(uLightIndex);
+        if (length(lightColor) > 0.0)
+        {
+            float visibility = CalculateSunShadowMapVisibility(mat.PositionWS);
+            vec3 lightVector = GetEnvLightDirection(uLightIndex);
+            CalculateShading(lighting, lightVector, visibility * lightColor, mat);
+        }
     #endif
-
-
-    if (visibility > 0.0001)
-    {
-        CalculateShading(lighting, lightVector, visibility * getSunColor(), mat);
-    }
 }
 
 
@@ -209,16 +306,8 @@ void CalculateIndirectLighting(inout LightingTerms_t lighting, inout MaterialPro
 
     lighting.SpecularOcclusion = vAHDData.a;
 
-#elif (D_BAKED_LIGHTING_FROM_VERTEX_STREAM == 1)
-    lighting.DiffuseIndirect = vPerVertexLightingOut.rgb;
 #elif (D_BAKED_LIGHTING_FROM_PROBE == 1)
-    #if (LightmapGameVersionNumber == 0 || LightmapGameVersionNumber == 1)
-        vec3 vIndirectSampleCoords = CalculateProbeSampleCoords(mat.PositionWS);
-        vIndirectSampleCoords.z /= 6;
-        // clamp(vIndirectSampleCoords, g_vLightProbeVolumeLayer0TextureMin.xyz, g_vLightProbeVolumeLayer0TextureMax.xyz);
-    #elif (LightmapGameVersionNumber == 2)
-        vec3 vIndirectSampleCoords = CalculateAtlasProbeIndirectCoords(mat.PositionWS);
-    #endif
+    vec3 vIndirectSampleCoords = CalculateProbeIndirectCoords(mat.PositionWS);
 
     // Take up to 3 samples along the normal direction
     vec3 vDepthSliceOffsets = mix(vec3(0, 1, 2) / 6.0, vec3(3, 4, 5) / 6.0, step(mat.AmbientNormal, vec3(0.0)));
@@ -234,11 +323,8 @@ void CalculateIndirectLighting(inout LightingTerms_t lighting, inout MaterialPro
         lighting.DiffuseIndirect += vAmbient[i] * vNormalSquared[i];
     }
 
-    //if (sin(g_flTime * 3) > 0)
-    //    lighting.DiffuseIndirect = vec3(0.3);
-
-#else
-    #define NoBakeLighting 1
+#elif (D_BAKED_LIGHTING_FROM_VERTEX_STREAM == 1)
+    lighting.DiffuseIndirect = vPerVertexLightingOut.rgb;
 #endif
 
     // Environment Maps

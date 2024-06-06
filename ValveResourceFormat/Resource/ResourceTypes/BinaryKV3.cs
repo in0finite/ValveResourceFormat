@@ -664,6 +664,13 @@ namespace ValveResourceFormat.ResourceTypes
         {
             var currentOffset = reader.BaseStream.Position;
 
+            // We don't support non-object roots properly, so this is a hack to handle "null" kv3
+            if (datatype != KVType.OBJECT && parent == null)
+            {
+                name ??= "root";
+                parent ??= new KVObject(name);
+            }
+
             switch (datatype)
             {
                 case KVType.NULL:
@@ -896,7 +903,7 @@ namespace ValveResourceFormat.ResourceTypes
             return type;
         }
 
-        private static KVValue MakeValue(KVType type, object data, KVFlag flag)
+        public static KVValue MakeValue(KVType type, object data, KVFlag flag = KVFlag.None)
         {
             var realType = ConvertBinaryOnlyKVType(type);
 

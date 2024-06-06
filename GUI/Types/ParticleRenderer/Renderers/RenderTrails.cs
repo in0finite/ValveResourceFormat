@@ -9,7 +9,7 @@ namespace GUI.Types.ParticleRenderer.Renderers
     {
         private const string ShaderName = "vrf.particle.trail";
 
-        private Shader shader;
+        private readonly Shader shader;
         private readonly VrfGuiContext guiContext;
         private readonly int vaoHandle;
         private readonly RenderTexture texture;
@@ -109,8 +109,6 @@ namespace GUI.Types.ParticleRenderer.Renderers
         public override void Render(ParticleCollection particleBag, ParticleSystemRenderState systemRenderState, Matrix4x4 modelViewMatrix)
         {
             var particles = particleBag.Current;
-
-            GL.Enable(EnableCap.Blend);
 
             if (blendMode == ParticleBlendMode.PARTICLE_OUTPUT_BLEND_MODE_ADD)
             {
@@ -212,27 +210,12 @@ namespace GUI.Types.ParticleRenderer.Renderers
 
             GL.UseProgram(0);
             GL.BindVertexArray(0);
-
-            if (blendMode == ParticleBlendMode.PARTICLE_OUTPUT_BLEND_MODE_ADD)
-            {
-                GL.BlendEquation(BlendEquationMode.FuncAdd);
-            }
-
-            GL.Disable(EnableCap.Blend);
         }
 
         public override IEnumerable<string> GetSupportedRenderModes() => shader.RenderModes;
 
         public override void SetRenderMode(string renderMode)
         {
-            var parameters = new Dictionary<string, byte>();
-
-            if (renderMode != null && shader.RenderModes.Contains(renderMode))
-            {
-                parameters.Add(string.Concat(ShaderLoader.RenderModeDefinePrefix, renderMode), 1);
-            }
-
-            shader = guiContext.ShaderLoader.LoadShader(ShaderName, parameters);
         }
     }
 }

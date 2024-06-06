@@ -12,6 +12,7 @@ namespace ValveResourceFormat.IO
     {
         private const string AddonsSuffix = "_addons";
         private const string GameinfoGi = "gameinfo.gi";
+        public const string CompiledFileSuffix = "_c";
 
         private static readonly string[] ModIdentifiers =
         [
@@ -188,7 +189,7 @@ namespace ValveResourceFormat.IO
             }
 
 #if DEBUG
-            if (string.IsNullOrEmpty(file) || file == "_c")
+            if (string.IsNullOrEmpty(file) || file == CompiledFileSuffix)
             {
                 Console.Error.WriteLine($"Empty string passed to file loader here: {Environment.StackTrace}");
 
@@ -291,6 +292,8 @@ namespace ValveResourceFormat.IO
                 return shader;
             }
         }
+
+        public virtual Resource LoadFileCompiled(string file) => LoadFile(string.Concat(file, CompiledFileSuffix));
 
         public virtual Resource LoadFile(string file)
         {
@@ -542,8 +545,6 @@ namespace ValveResourceFormat.IO
 
         private HashSet<string> FindGameFoldersForWorkshopFile()
         {
-            var folders = new HashSet<string>();
-
             // If we're loading a file from steamapps/workshop folder, attempt to discover gameinfos and load vpks for the game
             const string STEAMAPPS_WORKSHOP_CONTENT = "steamapps/workshop/content";
             var filePath = CurrentFileName.Replace('\\', '/');
@@ -551,7 +552,7 @@ namespace ValveResourceFormat.IO
 
             if (contentIndex == -1)
             {
-                return folders;
+                return [];
             }
 
             // Extract the appid from path
@@ -560,14 +561,14 @@ namespace ValveResourceFormat.IO
 
             if (slashAfterAppId == -1)
             {
-                return folders;
+                return [];
             }
 
             var appIdString = filePath[contentIndexEnd..slashAfterAppId];
 
             if (!uint.TryParse(appIdString, out var appId))
             {
-                return folders;
+                return [];
             }
 
 #if DEBUG_FILE_LOAD
@@ -591,7 +592,7 @@ namespace ValveResourceFormat.IO
             }
             catch
             {
-                return folders;
+                return [];
             }
 
             var installDir = appManifestKv["installdir"].ToString();
@@ -599,7 +600,7 @@ namespace ValveResourceFormat.IO
 
             if (!Directory.Exists(gamePath))
             {
-                return folders;
+                return [];
             }
 
             // Find all the gameinfo.gi files, open them to get game paths
@@ -615,9 +616,21 @@ namespace ValveResourceFormat.IO
                 ShouldIncludePredicate = static (ref FileSystemEntry entry) => !entry.IsDirectory && entry.FileName.Equals(GameinfoGi, StringComparison.Ordinal)
             };
 
+            var folders = new HashSet<string>();
+
             foreach (var gameInfo in gameInfos)
             {
-                var assumedGameRoot = Path.GetDirectoryName(Path.GetDirectoryName(gameInfo));
+                var directory = Path.GetDirectoryName(gameInfo);
+                var modName = Path.GetFileName(directory);
+                var assumedGameRoot = Path.GetDirectoryName(directory);
+
+                if (modName == "core")
+                {
+                    // Skip loading core gameinfo directly, let it be discovered by any of the other mod folders
+                    // This is needed to prevent core being found first and having highest priority
+                    continue;
+                }
+
                 HandleGameInfo(folders, assumedGameRoot, gameInfo);
             }
 

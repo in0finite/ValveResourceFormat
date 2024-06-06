@@ -1,10 +1,11 @@
 using GUI.Types.ParticleRenderer.Emitters;
+using GUI.Types.ParticleRenderer.ForceGenerators;
 using GUI.Types.ParticleRenderer.Initializers;
 using GUI.Types.ParticleRenderer.Operators;
 using GUI.Types.ParticleRenderer.PreEmissionOperators;
 using GUI.Types.ParticleRenderer.Renderers;
 using GUI.Utils;
-using ValveResourceFormat.Serialization;
+using ValveResourceFormat.Serialization.KeyValues;
 
 namespace GUI.Types.ParticleRenderer
 {
@@ -87,7 +88,7 @@ namespace GUI.Types.ParticleRenderer
                 ["C_OP_OscillateVector"] = operatorInfo => new OscillateVector(operatorInfo),
                 ["C_OP_OscillateVectorSimple"] = operatorInfo => new OscillateVectorSimple(operatorInfo),
                 ["C_OP_PlaneCull"] = operatorInfo => new PlaneCull(operatorInfo),
-                ["C_OP_PositionLock"] = operatorInfo => new PositionLock(operatorInfo),
+                //["C_OP_PositionLock"] = operatorInfo => new PositionLock(operatorInfo), // This is breaking positioning effects, needs to be rewritten
                 ["C_OP_QuantizeFloat"] = operatorInfo => new QuantizeFloat(operatorInfo),
                 ["C_OP_RampScalarLinearSimple"] = operatorInfo => new RampScalarLinearSimple(operatorInfo),
                 ["C_OP_RemapCrossProductOfTwoVectorsToVector"] = operatorInfo => new RemapCrossProductOfTwoVectorsToVector(operatorInfo),
@@ -103,6 +104,14 @@ namespace GUI.Types.ParticleRenderer
                 ["C_OP_SpinUpdate"] = operatorInfo => new SpinUpdate(operatorInfo),
                 ["C_OP_SpinYaw"] = operatorInfo => new SpinYaw(operatorInfo),
                 ["C_OP_VelocityDecay"] = operatorInfo => new VelocityDecay(operatorInfo),
+            };
+
+        // Register particle force generators
+        private static readonly Dictionary<string, Func<ParticleDefinitionParser, ParticleFunctionOperator>> ForceGeneratorDictionary
+            = new()
+            {
+                ["C_OP_AttractToControlPoint"] = forceGeneratorInfo => new AttractToControlPoint(forceGeneratorInfo),
+                ["C_OP_RandomForce"] = forceGeneratorInfo => new RandomForce(forceGeneratorInfo),
             };
 
         // Register particle renderers
@@ -127,7 +136,7 @@ namespace GUI.Types.ParticleRenderer
                 ["C_OP_StopAfterCPDuration"] = preEmissionOperatorInfo => new StopAfterDuration(preEmissionOperatorInfo),
             };
 
-        public static bool TryCreateEmitter(string name, IKeyValueCollection emitterInfo, out ParticleFunctionEmitter emitter)
+        public static bool TryCreateEmitter(string name, KVObject emitterInfo, out ParticleFunctionEmitter emitter)
         {
             if (EmitterDictionary.TryGetValue(name, out var factory))
             {
@@ -139,7 +148,7 @@ namespace GUI.Types.ParticleRenderer
             return false;
         }
 
-        public static bool TryCreateInitializer(string name, IKeyValueCollection initializerInfo, out ParticleFunctionInitializer initializer)
+        public static bool TryCreateInitializer(string name, KVObject initializerInfo, out ParticleFunctionInitializer initializer)
         {
             if (InitializerDictionary.TryGetValue(name, out var factory))
             {
@@ -151,7 +160,7 @@ namespace GUI.Types.ParticleRenderer
             return false;
         }
 
-        public static bool TryCreateOperator(string name, IKeyValueCollection operatorInfo, out ParticleFunctionOperator @operator)
+        public static bool TryCreateOperator(string name, KVObject operatorInfo, out ParticleFunctionOperator @operator)
         {
             if (OperatorDictionary.TryGetValue(name, out var factory))
             {
@@ -163,7 +172,19 @@ namespace GUI.Types.ParticleRenderer
             return false;
         }
 
-        public static bool TryCreateRender(string name, IKeyValueCollection rendererInfo, VrfGuiContext vrfGuiContext, out ParticleFunctionRenderer renderer)
+        public static bool TryCreateForceGenerator(string name, KVObject forceGeneratorInfo, out ParticleFunctionOperator @operator)
+        {
+            if (ForceGeneratorDictionary.TryGetValue(name, out var factory))
+            {
+                @operator = factory(new ParticleDefinitionParser(forceGeneratorInfo));
+                return true;
+            }
+
+            @operator = default;
+            return false;
+        }
+
+        public static bool TryCreateRender(string name, KVObject rendererInfo, VrfGuiContext vrfGuiContext, out ParticleFunctionRenderer renderer)
         {
             if (RendererDictionary.TryGetValue(name, out var factory))
             {
@@ -174,7 +195,7 @@ namespace GUI.Types.ParticleRenderer
             renderer = default;
             return false;
         }
-        public static bool TryCreatePreEmissionOperator(string name, IKeyValueCollection preEmissionOperatorInfo, out ParticleFunctionPreEmissionOperator preEmissionOperator)
+        public static bool TryCreatePreEmissionOperator(string name, KVObject preEmissionOperatorInfo, out ParticleFunctionPreEmissionOperator preEmissionOperator)
         {
             if (PreEmissionOperatorDictionary.TryGetValue(name, out var factory))
             {

@@ -1,48 +1,47 @@
-using ValveResourceFormat.Serialization;
 using ValveResourceFormat.Serialization.KeyValues;
 
 namespace ValveResourceFormat.ResourceTypes
 {
     public class PostProcessing : KeyValuesOrNTRO
     {
-        public PostProcessing() : base(BlockType.DATA, "PostProcessingResource_t", upgradeToKV3: true)
+        public PostProcessing() : base(BlockType.DATA, "PostProcessingResource_t")
         { }
 
-        public IKeyValueCollection GetTonemapParams()
+        public KVObject GetTonemapParams()
         {
             if (Data.GetProperty<bool>("m_bHasTonemapParams"))
             {
-                return Data.GetProperty<IKeyValueCollection>("m_toneMapParams");
+                return Data.GetProperty<KVObject>("m_toneMapParams");
             }
 
             return null;
         }
 
-        public IKeyValueCollection GetBloomParams()
+        public KVObject GetBloomParams()
         {
             if (Data.GetProperty<bool>("m_bHasBloomParams"))
             {
-                return Data.GetProperty<IKeyValueCollection>("m_bloomParams");
+                return Data.GetProperty<KVObject>("m_bloomParams");
             }
 
             return null;
         }
 
-        public IKeyValueCollection GetVignetteParams()
+        public KVObject GetVignetteParams()
         {
             if (Data.GetProperty<bool>("m_bHasVignetteParams"))
             {
-                return Data.GetProperty<IKeyValueCollection>("m_vignetteParams");
+                return Data.GetProperty<KVObject>("m_vignetteParams");
             }
 
             return null;
         }
 
-        public IKeyValueCollection GetLocalContrastParams()
+        public KVObject GetLocalContrastParams()
         {
             if (Data.GetProperty<bool>("m_bHasLocalContrastParams"))
             {
-                return Data.GetProperty<IKeyValueCollection>("m_localConstrastParams");
+                return Data.GetProperty<KVObject>("m_localConstrastParams");
             }
 
             return null;

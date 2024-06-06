@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
@@ -10,13 +9,19 @@ namespace GUI.Utils
 {
     static class Settings
     {
-        private const int SettingsFileCurrentVersion = 5;
+        private const int SettingsFileCurrentVersion = 8;
         private const int RecentFilesLimit = 20;
+
+        [Flags]
+        public enum QuickPreviewFlags : int
+        {
+            Enabled = 1 << 0,
+            AutoPlaySounds = 1 << 1,
+        }
 
         public class AppConfig
         {
             public List<string> GameSearchPaths { get; set; } = [];
-            public string BackgroundColor { get; set; } = string.Empty;
             public string OpenDirectory { get; set; } = string.Empty;
             public string SaveDirectory { get; set; } = string.Empty;
             public List<string> BookmarkedFiles { get; set; } = [];
@@ -33,18 +38,20 @@ namespace GUI.Utils
             public float Volume { get; set; }
             public int Vsync { get; set; }
             public int DisplayFps { get; set; }
+            public int QuickFilePreview { get; set; }
+            public int OpenExplorerOnStart { get; set; }
             public int _VERSION_DO_NOT_MODIFY { get; set; }
         }
 
-        private static string SettingsFolder;
+        public static string SettingsFolder { get; private set; }
         private static string SettingsFilePath;
 
         public static AppConfig Config { get; set; } = new AppConfig();
 
-        public static Color BackgroundColor { get; set; }
-
         public static event EventHandler RefreshCamerasOnSave;
         public static void InvokeRefreshCamerasOnSave() => RefreshCamerasOnSave.Invoke(null, null);
+
+        public static string GpuRendererAndDriver;
 
         public static void Load()
         {
@@ -90,18 +97,22 @@ namespace GUI.Utils
                 }
             }
 
-            try
-            {
-                BackgroundColor = ColorTranslator.FromHtml(Config.BackgroundColor);
-            }
-            catch
-            {
-                //
-            }
+            var currentVersion = Config._VERSION_DO_NOT_MODIFY;
 
-            if (BackgroundColor.IsEmpty)
+            if (currentVersion > SettingsFileCurrentVersion)
             {
-                BackgroundColor = Color.FromArgb(60, 60, 60);
+                var result = MessageBox.Show(
+                    $"Your current settings.vdf has a higher version ({currentVersion}) than currently supported ({SettingsFileCurrentVersion}). You likely ran an older version of Source 2 Viewer and your settings may get reset.\n\nDo you want to continue?",
+                    "Source 2 Viewer downgraded",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question
+                );
+
+                if (result != DialogResult.Yes)
+                {
+                    Environment.Exit(1);
+                    return;
+                }
             }
 
             Config.SavedCameras ??= [];
@@ -134,24 +145,29 @@ namespace GUI.Utils
             Config.AntiAliasingSamples = Math.Clamp(Config.AntiAliasingSamples, 0, 64);
             Config.Volume = Math.Clamp(Config.Volume, 0f, 1f);
 
-            if (Config._VERSION_DO_NOT_MODIFY < 2) // version 2: added anti aliasing samples
+            if (currentVersion < 2) // version 2: added anti aliasing samples
             {
                 Config.AntiAliasingSamples = 8;
             }
 
-            if (Config._VERSION_DO_NOT_MODIFY < 3) // version 3: added volume
+            if (currentVersion < 3) // version 3: added volume
             {
                 Config.Volume = 0.5f;
             }
 
-            if (Config._VERSION_DO_NOT_MODIFY < 4)
+            if (currentVersion < 4) // version 4: added vsync
             {
                 Config.Vsync = 1;
             }
 
-            if (Config._VERSION_DO_NOT_MODIFY < 5)
+            if (currentVersion < 5) // version 5: added display fps
             {
                 Config.DisplayFps = 1;
+            }
+
+            if (currentVersion != SettingsFileCurrentVersion)
+            {
+                Log.Info(nameof(Settings), $"Settings version changed: {currentVersion} -> {SettingsFileCurrentVersion}");
             }
 
             Config._VERSION_DO_NOT_MODIFY = SettingsFileCurrentVersion;
@@ -159,8 +175,6 @@ namespace GUI.Utils
 
         public static void Save()
         {
-            Config.BackgroundColor = ColorTranslator.ToHtml(BackgroundColor);
-
             var tempFile = Path.GetTempFileName();
 
             using (var stream = new FileStream(tempFile, FileMode.Create, FileAccess.Write, FileShare.None))

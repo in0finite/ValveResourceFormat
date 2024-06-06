@@ -1,8 +1,14 @@
 #version 460
 
 // Render modes -- Switched on/off by code
-#include "common/utils.glsl"
-#include "common/rendermodes.glsl"
+#define renderMode_FullBright 0
+#define renderMode_Color 0
+#define renderMode_Roughness 0
+#define renderMode_Normals 0
+#define renderMode_Tangents 0
+#define renderMode_BumpMap 0
+#define renderMode_BumpNormals 0
+#define renderMode_Illumination 0
 #define renderMode_Mask1 0
 #define renderMode_Mask2 0
 #define renderMode_Metalness 0
@@ -34,21 +40,15 @@ uniform sampler2D g_tMasks2;
 //uniform sampler2D g_tDiffuseWarp;
 uniform vec4 vTint;
 
+#include "common/utils.glsl"
 #include "common/ViewConstants.glsl"
 
 // Material properties
 uniform float g_flSpecularExponent = 100.0;
 
 //Calculate the normal of this fragment in world space
-vec3 calculateWorldNormal()
+vec3 calculateWorldNormal(vec3 vNormalTs)
 {
-    //Get the noral from the texture map -- Normal map seems broken
-    vec4 bumpNormal = texture(g_tNormal, vTexCoordOut);
-
-    //Reconstruct the tangent vector from the map
-    vec2 temp = vec2(bumpNormal.w, bumpNormal.y) * 2 - 1;
-    vec3 tangentNormal = vec3(temp, sqrt(1 - temp.x * temp.x - temp.y * temp.y));
-
     vec3 normal = normalize(vNormalOut);
     vec3 tangent = normalize(vTangentOut.xyz);
     vec3 bitangent = normalize(vBitangentOut);
@@ -57,7 +57,7 @@ vec3 calculateWorldNormal()
     mat3 tangentSpace = mat3(tangent, bitangent, normal);
 
     //Calculate the tangent normal in world space and return it
-    return normalize(tangentSpace * tangentNormal);
+    return normalize(tangentSpace * vNormalTs);
 }
 
 //Main entry point
@@ -88,14 +88,12 @@ void main()
 #endif
 
     //Get the world normal for this fragment
-    vec3 worldNormal = calculateWorldNormal();
+    vec3 vNormalTs = DecodeDxt5Normal(texture(g_tNormal, vTexCoordOut));
+    vec3 worldNormal = calculateWorldNormal(vNormalTs);
 
     //Get shadow and light color
     //vec3 shadowColor = texture(g_tDiffuseWarp, vec2(0, mask1.g)).rgb;
 
-#if renderMode_FullBright == 1
-    float illumination = 1.0;
-#else
     //Calculate half-lambert lighting
     float illumination = dot(worldNormal, lightDirection);
     illumination = illumination * 0.5 + 0.5;
@@ -105,7 +103,11 @@ void main()
         //Self illumination - mask 1 channel A
         illumination = illumination + mask1.a;
     #endif
-#endif
+
+    if (g_iRenderMode == renderMode_FullBright)
+    {
+        illumination = 1.0;
+    }
 
     //Calculate ambient color
     vec3 ambientColor = illumination * color.rgb;
@@ -153,49 +155,52 @@ void main()
     // == End of shader
 
     // Different render mode definitions
-#if renderMode_Color == 1
-    outputColor = vec4(color.rgb, 1.0);
+    if (g_iRenderMode == renderMode_Color)
+    {
+        outputColor = vec4(color.rgb, 1.0);
+    }
+    else if (g_iRenderMode == renderMode_Illumination)
+    {
+        outputColor = vec4(vec3(illumination), 1.0);
+    }
+    else if (g_iRenderMode == renderMode_BumpMap)
+    {
+        outputColor = vec4(PackToColor(vNormalTs), 1.0);
+    }
+    else if (g_iRenderMode == renderMode_Tangents)
+    {
+        outputColor = vec4(PackToColor(vTangentOut.xyz), 1.0);
+    }
+    else if (g_iRenderMode == renderMode_Normals)
+    {
+        outputColor = vec4(PackToColor(vNormalOut), 1.0);
+    }
+    else if (g_iRenderMode == renderMode_BumpNormals)
+    {
+        outputColor = vec4(PackToColor(worldNormal), 1.0);
+    }
+    else if (g_iRenderMode == renderMode_Metalness)
+    {
+        outputColor = vec4(vec3(metalness), 1.0);
+    }
+    else if (g_iRenderMode == renderMode_Specular)
+    {
+        outputColor = vec4(specularColor * specular, 1.0);
+    }
+    else if (g_iRenderMode == renderMode_RimLight)
+    {
+        outputColor = vec4(color.rgb * rimLight, 1.0);
+    }
+#if F_MASKS_1
+    else if (g_iRenderMode == renderMode_Mask1)
+    {
+        outputColor = vec4(mask1.rgb, 1.0);
+    }
 #endif
-
-#if renderMode_Illumination == 1
-    outputColor = vec4(vec3(illumination), 1.0);
-#endif
-
-#if renderMode_Mask1 == 1 && F_MASKS_1
-    outputColor = vec4(mask1.rgb, 1.0);
-#endif
-
-#if renderMode_Mask2 == 1 && F_MASKS_2
-    outputColor = vec4(mask2.rgb, 1.0);
-#endif
-
-#if renderMode_BumpMap == 1
-    outputColor = texture(g_tNormal, vTexCoordOut);
-#endif
-
-#if renderMode_Tangents == 1
-    outputColor = vec4(PackToColor(vTangentOut.xyz), 1.0);
-#endif
-
-#if renderMode_Normals == 1
-    outputColor = vec4(PackToColor(vNormalOut), 1.0);
-#endif
-
-#if renderMode_BumpNormals == 1
-    outputColor = vec4(PackToColor(worldNormal), 1.0);
-#endif
-
-#if renderMode_Metalness == 1
-    outputColor = vec4(vec3(metalness), 1.0);
-#endif
-
-#if renderMode_Specular == 1
-    outputColor = vec4(specularColor * specular, 1.0);
-#endif
-
-#if renderMode_RimLight == 1
-    outputColor = vec4(color.rgb * rimLight, 1.0);
+#if F_MASKS_2
+    else if (g_iRenderMode == renderMode_Mask2)
+    {
+        outputColor = vec4(mask2.rgb, 1.0);
+    }
 #endif
 }
-
-

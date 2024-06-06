@@ -2,10 +2,11 @@ using System.Diagnostics;
 using System.Linq;
 using GUI.Types.Renderer.UniformBuffers;
 using GUI.Utils;
+using static GUI.Types.Renderer.GLSceneViewer;
 
 namespace GUI.Types.Renderer
 {
-    partial class Scene
+    partial class Scene : IDisposable
     {
         public readonly struct UpdateContext
         {
@@ -27,9 +28,11 @@ namespace GUI.Types.Renderer
             public Shader ReplacementShader { get; set; }
         }
 
+        public Dictionary<string, byte> RenderAttributes { get; } = [];
         public WorldLightingInfo LightingInfo { get; }
         public WorldFogInfo FogInfo { get; set; } = new();
-        public Dictionary<string, byte> RenderAttributes { get; } = [];
+        private UniformBuffer<LightingConstants> lightingBuffer;
+
         public VrfGuiContext GuiContext { get; }
         public Octree<SceneNode> StaticOctree { get; }
         public Octree<SceneNode> DynamicOctree { get; }
@@ -49,6 +52,14 @@ namespace GUI.Types.Renderer
             DynamicOctree = new Octree<SceneNode>(sizeHint);
 
             LightingInfo = new(this);
+        }
+
+        public void Initialize()
+        {
+            UpdateOctrees();
+            CalculateLightProbeBindings();
+            CalculateEnvironmentMaps();
+            CreateBuffers();
         }
 
         public void Add(SceneNode node, bool dynamic)
@@ -113,6 +124,24 @@ namespace GUI.Types.Renderer
                 node.Update(updateContext);
                 DynamicOctree.Update(node, oldBox, node.BoundingBox);
             }
+        }
+
+        public void CreateBuffers()
+        {
+            lightingBuffer = new(ReservedBufferSlots.Lighting)
+            {
+                Data = LightingInfo.LightingData
+            };
+        }
+
+        public void UpdateBuffers()
+        {
+            lightingBuffer.Update();
+        }
+
+        public void SetSceneBuffers()
+        {
+            lightingBuffer.BindBufferBase();
         }
 
         private readonly List<SceneNode> CullResults = [];
@@ -217,9 +246,6 @@ namespace GUI.Types.Renderer
                         }
                     }
                 }
-                else if (node is SceneAggregate aggregate)
-                {
-                }
                 else if (node is SceneAggregate.Fragment fragment)
                 {
                     Add(new MeshBatchRenderer.Request
@@ -241,6 +267,98 @@ namespace GUI.Types.Renderer
             }
 
             renderLooseNodes.Sort(MeshBatchRenderer.CompareCameraDistance);
+        }
+
+        private List<SceneNode> CulledShadowNodes { get; } = [];
+        private readonly List<RenderableMesh> listWithSingleMesh = [null];
+        private Dictionary<DepthOnlyProgram, List<MeshBatchRenderer.Request>> CulledShadowDrawCalls { get; } = new()
+        {
+            [DepthOnlyProgram.Static] = [],
+            [DepthOnlyProgram.StaticAlphaTest] = [],
+            [DepthOnlyProgram.Animated] = [],
+        };
+
+        public void SetupSceneShadows(Camera camera)
+        {
+            if (!LightingInfo.EnableDynamicShadows)
+            {
+                return;
+            }
+
+            LightingInfo.UpdateSunLightFrustum(camera);
+
+            foreach (var bucket in CulledShadowDrawCalls.Values)
+            {
+                bucket.Clear();
+            }
+
+            StaticOctree.Root.Query(LightingInfo.SunLightFrustum, CulledShadowNodes);
+
+            if (LightingInfo.HasBakedShadowsFromLightmap)
+            {
+                // Can also check for the NoShadows flag
+                CulledShadowNodes.RemoveAll(static node => node.LayerName != "Entities");
+            }
+
+            DynamicOctree.Root.Query(LightingInfo.SunLightFrustum, CulledShadowNodes);
+
+            foreach (var node in CulledShadowNodes)
+            {
+                List<RenderableMesh> meshes;
+
+                if (node is IRenderableMeshCollection meshCollection)
+                {
+                    meshes = meshCollection.RenderableMeshes;
+                }
+                else if (node is SceneAggregate aggregate)
+                {
+                    listWithSingleMesh[0] = aggregate.RenderMesh;
+                    meshes = listWithSingleMesh;
+                }
+                else
+                {
+                    continue;
+                }
+
+                var animated = node is ModelSceneNode model && model.IsAnimated;
+
+                foreach (var mesh in meshes)
+                {
+                    foreach (var opaqueCall in mesh.DrawCallsOpaque)
+                    {
+                        var bucket = (opaqueCall.Material.IsAlphaTest, animated) switch
+                        {
+                            (false, false) => DepthOnlyProgram.Static,
+                            (true, _) => DepthOnlyProgram.StaticAlphaTest,
+                            (false, true) => DepthOnlyProgram.Animated,
+                        };
+
+                        CulledShadowDrawCalls[bucket].Add(new MeshBatchRenderer.Request
+                        {
+                            Transform = node.Transform,
+                            Mesh = mesh,
+                            Call = opaqueCall,
+                            Node = node,
+                        });
+                    }
+                }
+            }
+
+            CulledShadowNodes.Clear();
+        }
+
+        public void RenderOpaqueShadows(RenderContext renderContext, Span<Shader> depthOnlyShaders)
+        {
+            using (new GLDebugGroup("Scene Shadows"))
+            {
+                renderContext.RenderPass = RenderPass.DepthOnly;
+
+                foreach (var (program, calls) in CulledShadowDrawCalls)
+                {
+                    renderContext.ReplacementShader = depthOnlyShaders[(int)program];
+                    MeshBatchRenderer.Render(calls, renderContext);
+                }
+            }
         }
 
         public void RenderOpaqueLayer(RenderContext renderContext)
@@ -286,14 +404,17 @@ namespace GUI.Types.Renderer
             }
         }
 
-        public void SetEnabledLayers(HashSet<string> layers)
+        public void SetEnabledLayers(HashSet<string> layers, bool skipUpdate = false)
         {
             foreach (var renderer in AllNodes)
             {
                 renderer.LayerEnabled = layers.Contains(renderer.LayerName);
             }
 
-            UpdateOctrees();
+            if (!skipUpdate)
+            {
+                UpdateOctrees();
+            }
         }
 
         public void UpdateOctrees()
@@ -341,7 +462,7 @@ namespace GUI.Types.Renderer
                     continue;
                 }
 
-                if (LightingInfo.LightProbeType == LightProbeType.IndividualProbesIrradianceOnly && precomputedHandshake <= LightingInfo.LightProbes.Count)
+                if (LightingInfo.LightmapGameVersionNumber == 0 && precomputedHandshake <= LightingInfo.LightProbes.Count)
                 {
                     // SteamVR Home node handshake as probe index
                     node.LightProbeBinding = LightingInfo.LightProbes[precomputedHandshake - 1];
@@ -359,16 +480,28 @@ namespace GUI.Types.Renderer
                 .OrderByDescending(static lpv => lpv.IndoorOutdoorLevel)
                 .ThenBy(static lpv => lpv.AtlasSize.LengthSquared());
 
+            var nodes = new List<SceneNode>();
+
             foreach (var probe in sortedLightProbes)
             {
-                var nodes = new List<SceneNode>();
                 StaticOctree.Root.Query(probe.BoundingBox, nodes);
-                DynamicOctree.Root.Query(probe.BoundingBox, nodes);
+                DynamicOctree.Root.Query(probe.BoundingBox, nodes); // TODO: This should actually be done dynamically
 
                 foreach (var node in nodes)
                 {
                     node.LightProbeBinding ??= probe;
                 }
+
+                nodes.Clear();
+            }
+
+            // Assign random probe to any node that does not have any light probes to fix the flickering,
+            // this isn't ideal, and a proper fix would be to remove D_BAKED_LIGHTING_FROM_PROBE from the shader
+            var firstProbe = LightingInfo.ProbeHandshakes.Values.First();
+
+            foreach (var node in AllNodes)
+            {
+                node.LightProbeBinding ??= firstProbe;
             }
         }
 
@@ -392,7 +525,9 @@ namespace GUI.Types.Renderer
                 _ => HandShakeCompare
             });
 
+            var nodes = new List<SceneNode>();
             var i = 0;
+
             foreach (var envMap in LightingInfo.EnvMaps)
             {
                 if (i >= LightingConstants.MAX_ENVMAPS)
@@ -406,14 +541,8 @@ namespace GUI.Types.Renderer
                     Debug.Assert(envMap.ArrayIndex == i, "Envmap array index mismatch");
                 }
 
-                var nodes = StaticOctree.Query(envMap.BoundingBox);
-
-                foreach (var node in nodes)
-                {
-                    node.EnvMaps.Add(envMap);
-                }
-
-                nodes = DynamicOctree.Query(envMap.BoundingBox); // TODO: This should actually be done dynamically
+                StaticOctree.Root.Query(envMap.BoundingBox, nodes);
+                DynamicOctree.Root.Query(envMap.BoundingBox, nodes); // TODO: This should actually be done dynamically
 
                 foreach (var node in nodes)
                 {
@@ -422,6 +551,8 @@ namespace GUI.Types.Renderer
 
                 UpdateGpuEnvmapData(envMap, i);
                 i++;
+
+                nodes.Clear();
             }
 
             foreach (var node in AllNodes)
@@ -522,6 +653,11 @@ namespace GUI.Types.Renderer
 
             // TODO
             LightingInfo.LightingData.EnvMapNormalizationSH[index] = new Vector4(0, 0, 0, 1);
+        }
+
+        public void Dispose()
+        {
+            lightingBuffer?.Dispose();
         }
     }
 }

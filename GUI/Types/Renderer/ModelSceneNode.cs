@@ -38,6 +38,7 @@ namespace GUI.Types.Renderer
         private readonly List<RenderableMesh> meshRenderers = [];
         private readonly List<Animation> animations = [];
 
+        public bool IsAnimated => animationTexture != null;
         private RenderTexture animationTexture;
         private readonly int bonesCount;
 
@@ -80,6 +81,85 @@ namespace GUI.Types.Renderer
             LoadMeshes(model);
             UpdateBoundingBox();
             LoadAnimations(model);
+
+            SetCharacterEyeRenderParams();
+        }
+
+        readonly struct CharacterEyeParameters
+        {
+            public int LeftEyeBoneIndex { get; }
+            public Vector3 LeftEyePosition { get; }
+            public Vector3 LeftEyeForwardVector { get; } = Vector3.UnitX;
+            public Vector3 LeftEyeUpVector { get; } = Vector3.UnitZ;
+
+            public int RightEyeBoneIndex { get; }
+            public Vector3 RightEyePosition { get; }
+            public Vector3 RightEyeForwardVector { get; } = Vector3.UnitX;
+            public Vector3 RightEyeUpVector { get; } = Vector3.UnitZ;
+
+            public int TargetBoneIndex { get; }
+            public Vector3 TargetPosition { get; }
+
+            public bool AreValid => LeftEyeBoneIndex != -1 && RightEyeBoneIndex != -1 && TargetBoneIndex != -1;
+
+            public CharacterEyeParameters(AnimationController animationController)
+            {
+                var skeleton = animationController.FrameCache.Skeleton;
+
+                LeftEyeBoneIndex = skeleton.Bones.FirstOrDefault(b => b.Name == "eyeball_l")?.Index ?? -1;
+                RightEyeBoneIndex = skeleton.Bones.FirstOrDefault(b => b.Name == "eyeball_r")?.Index ?? -1;
+                TargetBoneIndex = skeleton.Bones.FirstOrDefault(b => b.Name == "eye_target")?.Index ?? -1;
+
+                if (!AreValid)
+                {
+                    return;
+                }
+
+                var bonesMatrices = new Matrix4x4[skeleton.Bones.Length];
+                animationController.GetBoneMatrices(bonesMatrices, bindPose: true);
+
+                LeftEyePosition = bonesMatrices[LeftEyeBoneIndex].Translation;
+                RightEyePosition = bonesMatrices[RightEyeBoneIndex].Translation;
+                TargetPosition = bonesMatrices[TargetBoneIndex].Translation;
+            }
+        }
+
+        public void SetCharacterEyeRenderParams()
+        {
+            var eyeEnablingMaterials = meshRenderers
+                .SelectMany(m => m.DrawCallsOpaque)
+                .Where(d => d.Material.Material.IntParams.GetValueOrDefault("F_EYEBALLS") == 1)
+                .Select(d => d.Material.Material)
+                .ToList();
+
+            if (eyeEnablingMaterials.Count == 0)
+            {
+                return;
+            }
+
+            var eyes = new CharacterEyeParameters(AnimationController);
+
+            if (!eyes.AreValid)
+            {
+                return;
+            }
+
+            foreach (var materialData in eyeEnablingMaterials)
+            {
+                materialData.IntParams["g_nEyeLBindIdx"] = eyes.LeftEyeBoneIndex;
+                materialData.IntParams["g_nEyeRBindIdx"] = eyes.RightEyeBoneIndex;
+                materialData.IntParams["g_nEyeTargetBindIdx"] = eyes.TargetBoneIndex;
+
+                materialData.VectorParams["g_vEyeLBindPos"] = new Vector4(eyes.LeftEyePosition, 0);
+                materialData.VectorParams["g_vEyeLBindFwd"] = new Vector4(eyes.LeftEyeForwardVector, 0);
+                materialData.VectorParams["g_vEyeLBindUp"] = new Vector4(eyes.LeftEyeUpVector, 0);
+
+                materialData.VectorParams["g_vEyeRBindPos"] = new Vector4(eyes.RightEyePosition, 0);
+                materialData.VectorParams["g_vEyeRBindFwd"] = new Vector4(eyes.RightEyeForwardVector, 0);
+                materialData.VectorParams["g_vEyeRBindUp"] = new Vector4(eyes.RightEyeUpVector, 0);
+
+                materialData.VectorParams["g_vEyeTargetBindPos"] = new Vector4(eyes.TargetPosition, 0);
+            }
         }
 
         public override void Update(Scene.UpdateContext context)
@@ -91,7 +171,7 @@ namespace GUI.Types.Renderer
 
             var frame = AnimationController.GetFrame();
 
-            if (animationTexture != null)
+            if (IsAnimated)
             {
                 // Update animation matrices
 
@@ -109,7 +189,7 @@ namespace GUI.Types.Renderer
                     GL.TextureSubImage2D(animationTexture.Handle, 0, 0, 0, animationTexture.Width, animationTexture.Height, PixelFormat.Rgba, PixelType.Float, floatBuffer);
 
                     var first = true;
-                    foreach (var matrix in matrices)
+                    foreach (var matrix in matrices[..bonesCount])
                     {
                         var bbox = LocalBoundingBox.Transform(matrix);
                         newBoundingBox = first ? bbox : newBoundingBox.Union(bbox);
@@ -151,10 +231,6 @@ namespace GUI.Types.Renderer
 
         public override void SetRenderMode(string renderMode)
         {
-            foreach (var renderer in meshRenderers)
-            {
-                renderer.SetRenderMode(renderMode);
-            }
         }
 
         public void SetMaterialGroup(string name)
@@ -227,7 +303,11 @@ namespace GUI.Types.Renderer
                     continue;
                 }
 
-                meshRenderers.Add(new RenderableMesh((Mesh)newResource.DataBlock, refMesh.MeshIndex, Scene, model, materialTable, debugLabel: Path.GetFileName(refMesh.MeshName)));
+                var mesh = (Mesh)newResource.DataBlock;
+                mesh.LoadExternalMorphData(Scene.GuiContext.FileLoader);
+                model.SetExternalMeshData(mesh);
+
+                meshRenderers.Add(new RenderableMesh(mesh, refMesh.MeshIndex, Scene, model, materialTable, debugLabel: Path.GetFileName(refMesh.MeshName)));
             }
 
             // Set active meshes to default

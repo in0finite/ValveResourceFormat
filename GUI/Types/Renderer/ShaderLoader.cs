@@ -4,6 +4,7 @@ using System.IO.Hashing;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using GUI.Controls;
 using GUI.Utils;
 using OpenTK.Graphics.OpenGL;
 using ValveResourceFormat.Utils;
@@ -12,8 +13,6 @@ namespace GUI.Types.Renderer
 {
     partial class ShaderLoader : IDisposable
     {
-        public const string RenderModeDefinePrefix = "renderMode_";
-
         [GeneratedRegex(@"(?<SourceFile>[0-9]+)\((?<Line>[0-9]+)\) : error C(?<ErrorNumber>[0-9]+):")]
         private static partial Regex NvidiaGlslError();
 
@@ -24,7 +23,7 @@ namespace GUI.Types.Renderer
         public int ShaderCount => CachedShaders.Count;
         private readonly Dictionary<string, HashSet<string>> ShaderDefines = [];
 
-        private readonly static Dictionary<string, byte> EmptyArgs = new(0);
+        private readonly static Dictionary<string, byte> EmptyArgs = [];
 
         private readonly ShaderParser Parser = new();
 
@@ -37,6 +36,7 @@ namespace GUI.Types.Renderer
         public class ParsedShaderData
         {
             public HashSet<string> Defines = [];
+            public HashSet<string> RenderModes = [];
             public HashSet<string> SrgbSamplers = [];
         }
 
@@ -92,11 +92,6 @@ namespace GUI.Types.Renderer
                 var fragmentShader = GL.CreateShader(ShaderType.FragmentShader);
                 LoadShader(fragmentShader, fragmentName, shaderName, arguments, ref parsedData);
 
-                var renderModes = parsedData.Defines
-                    .Where(k => k.StartsWith(RenderModeDefinePrefix, StringComparison.Ordinal))
-                    .Select(k => k[RenderModeDefinePrefix.Length..])
-                    .ToHashSet();
-
                 shaderProgram = GL.CreateProgram();
 
 #if DEBUG
@@ -114,7 +109,7 @@ namespace GUI.Types.Renderer
                     Name = shaderName,
                     Parameters = arguments,
                     Program = shaderProgram,
-                    RenderModes = renderModes,
+                    RenderModes = parsedData.RenderModes,
                     SrgbSamplers = parsedData.SrgbSamplers
                 };
 
@@ -206,7 +201,9 @@ namespace GUI.Types.Renderer
         // Map Valve's shader names to shader files VRF has
         private static string GetShaderFileByName(string shaderName) => shaderName switch
         {
+            "vrf.background" => "background",
             "vrf.default" => "default",
+            "vrf.depth_only" => "depth_only",
             "vrf.grid" => "grid",
             "vrf.picking" => "picking",
             "vrf.particle.sprite" => "particle_sprite",
@@ -214,6 +211,7 @@ namespace GUI.Types.Renderer
             "vrf.morph_composite" => "morph_composite",
             "vrf.texture_decode" => "texture_decode",
             "vrf.font_msdf" => "font_msdf",
+            "vrf.basic_shape" => "basic_shape",
 
             "sky.vfx" => "sky",
             "tools_sprite.vfx" => "sprite",
@@ -247,9 +245,11 @@ namespace GUI.Types.Renderer
 
         private IEnumerable<KeyValuePair<string, byte>> SortAndFilterArguments(string shaderName, IReadOnlyDictionary<string, byte> arguments)
         {
+            var defines = ShaderDefines[shaderName];
+
             return arguments
-                .Where(p => ShaderDefines[shaderName].Contains(p.Key))
-                .OrderBy(p => p.Key);
+                .Where(p => defines.Contains(p.Key))
+                .OrderBy(static p => p.Key);
         }
 
         private string GetArgumentDescription(string shaderName, IReadOnlyDictionary<string, byte> arguments)
@@ -345,8 +345,10 @@ namespace GUI.Types.Renderer
 
             var shaders = Directory.GetFiles(folder, "*.frag");
 
-            using var control = new OpenTK.GLControl(OpenTK.Graphics.GraphicsMode.Default, 4, 6, OpenTK.Graphics.GraphicsContextFlags.Default);
+            using var control = new OpenTK.GLControl(OpenTK.Graphics.GraphicsMode.Default, GLViewerControl.OpenGlVersionMajor, GLViewerControl.OpenGlVersionMinor, OpenTK.Graphics.GraphicsContextFlags.Default);
             control.MakeCurrent();
+
+            GLViewerControl.CheckOpenGL();
 
             foreach (var shader in shaders)
             {

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using Sledge.Formats.GameData;
 using Sledge.Formats.GameData.Objects;
@@ -12,6 +13,7 @@ if (args?.Length < 1)
 var allEntities = new SortedDictionary<string, EntityInfo>();
 var allProperties = new HashSet<string>();
 var baseEntities = new Dictionary<string, EntityInfo>();
+var entityMaterials = new Dictionary<string, string>();
 
 foreach (var arg in args!)
 {
@@ -31,25 +33,30 @@ Console.WriteLine();
 
 WriteEntities();
 WriteProperties();
+WriteMaterials();
 
 return 0;
 
-static string ConstructColor(Behaviour behaviour)
+static string ConstructColor(List<string> values)
 {
     var color = string.Empty;
 
-    if (behaviour.Values.All(x => x == "255"))
+    if (values.All(x => x == "255"))
     {
         return "Color32.White";
     }
 
-    if (behaviour.Values.Count == 3)
+    if (values.Count == 3)
     {
-        color = $"new Color32({behaviour.Values[0]}, {behaviour.Values[1]}, {behaviour.Values[2]})";
+        color = $"new Color32({values[0]}, {values[1]}, {values[2]})";
     }
-    else if (behaviour.Values.Count == 4)
+    else if (values.Count == 4)
     {
-        color = $"new Color32({behaviour.Values[0]}, {behaviour.Values[1]}, {behaviour.Values[2]}, {behaviour.Values[3]})";
+        color = $"new Color32({values[0]}, {values[1]}, {values[2]}, {values[3]})";
+    }
+    else
+    {
+        throw new InvalidDataException();
     }
 
     return color;
@@ -138,6 +145,19 @@ void ParseFile(string file)
                 }
             }
 
+            foreach (var dict in _class.Dictionaries)
+            {
+                if (dict.Name == "metadata" && dict.TryGetValue("auto_apply_material", out var autoApplyMaterial))
+                {
+                    var material = (string)autoApplyMaterial.Value;
+
+                    if (material != "materials/tools/toolstrigger.vmat")
+                    {
+                        entityMaterials[_class.Name] = material;
+                    }
+                }
+            }
+
             if ((behaviour.Name == "studio" || behaviour.Name == "editormodel" || behaviour.Name == "model") && behaviour.Values.Count > 0)
             {
                 value = behaviour.Values[0];
@@ -192,7 +212,7 @@ void ParseFile(string file)
 
                 if (behaviour.Name == "color" && behaviour.Values.Count >= 3)
                 {
-                    color = ConstructColor(behaviour);
+                    color = ConstructColor(behaviour.Values);
                 }
 
                 if (color == null && _class.ClassType != ClassType.BaseClass)
@@ -226,7 +246,7 @@ void ParseFile(string file)
             {
                 if (behaviour.Name == "line" && behaviour.Values.Count > 3)
                 {
-                    var color = ConstructColor(behaviour);
+                    var color = ConstructColor(behaviour.Values.Take(3).ToList());
                     var line = string.Empty;
 
                     if (behaviour.Values.Count == 5)
@@ -332,6 +352,20 @@ void WriteProperties()
     }
 
     File.WriteAllText("properties.txt", propertiesString.ToString());
+}
+
+void WriteMaterials()
+{
+    Console.WriteLine($"Found {entityMaterials.Count} entity materials");
+
+    var str = new StringBuilder();
+
+    foreach (var (name, material) in entityMaterials.OrderBy(x => x.Key))
+    {
+        str.AppendLine(CultureInfo.InvariantCulture, $"\"{name}\" => \"{material}\"");
+    }
+
+    File.WriteAllText("entity_materials.txt", str.ToString());
 }
 
 class EntityInfo

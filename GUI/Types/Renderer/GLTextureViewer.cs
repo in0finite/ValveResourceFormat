@@ -56,7 +56,6 @@ namespace GUI.Types.Renderer
         private TextureCodec decodeFlags;
         private Framebuffer SaveAsFbo;
 
-        private bool FirstPaint = true;
         private CheckedListBox decodeFlagsListBox;
 
         private Vector2 ActualTextureSize
@@ -135,19 +134,30 @@ namespace GUI.Types.Renderer
             {
                 Text = "Save to disk…",
                 AutoSize = true,
+                Dock = DockStyle.Fill
             };
-
             saveButton.Click += OnSaveButtonClick;
-
             var copyLabel = new Label
             {
                 Text = "or Ctrl-C to copy",
+                Dock = DockStyle.Fill,
+                TextAlign = System.Drawing.ContentAlignment.MiddleLeft
             };
 
-            AddControl(saveButton);
-            AddControl(copyLabel);
-
-            copyLabel.Location = new System.Drawing.Point(saveButton.Width, saveButton.Location.Y + 5);
+            var saveTable = new TableLayoutPanel
+            {
+                ColumnCount = 2,
+                RowCount = 1,
+                Dock = DockStyle.Top,
+                Size = new System.Drawing.Size(100, 64),
+                Padding = new Padding(0, 15, 0, 15),
+            };
+            saveTable.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
+            saveTable.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
+            saveTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            saveTable.Controls.Add(saveButton, 0, 0);
+            saveTable.Controls.Add(copyLabel, 1, 0);
+            AddControl(saveTable);
 
             if (Resource.ResourceType == ResourceType.PanoramaVectorGraphic)
             {
@@ -176,6 +186,7 @@ namespace GUI.Types.Renderer
                 Width = 200,
             });
 
+            ComboBox cubemapProjectionComboBox = null;
             CheckBox softwareDecodeCheckBox = null;
 
             if (textureData.NumMipLevels > 1)
@@ -214,7 +225,7 @@ namespace GUI.Types.Renderer
             {
                 ComboBox cubeFaceComboBox = null;
 
-                var equirectangularProjectionCheckBox = AddSelection("Projection type", (name, index) =>
+                cubemapProjectionComboBox = AddSelection("Projection type", (name, index) =>
                 {
                     cubeFaceComboBox.Enabled = index == 0;
 
@@ -248,8 +259,8 @@ namespace GUI.Types.Renderer
                 cubeFaceComboBox.Items.AddRange(Enum.GetNames<CubemapFace>());
                 cubeFaceComboBox.SelectedIndex = 0;
 
-                equirectangularProjectionCheckBox.Items.AddRange(Enum.GetNames<CubemapProjection>());
-                equirectangularProjectionCheckBox.SelectedIndex = (int)CubemapProjection.Equirectangular;
+                cubemapProjectionComboBox.Items.AddRange(Enum.GetNames<CubemapProjection>());
+                cubemapProjectionComboBox.SelectedIndex = (int)CubemapProjection.Equirectangular;
             }
 
             decodeFlagsListBox = AddMultiSelection("Texture Conversion",
@@ -270,6 +281,19 @@ namespace GUI.Types.Renderer
             var forceSoftwareDecode = textureData.IsRawJpeg || textureData.IsRawPng;
             softwareDecodeCheckBox = AddCheckBox("Software decode", forceSoftwareDecode, (state) =>
             {
+                if ((textureData.Flags & VTexFlags.CUBE_TEXTURE) != 0)
+                {
+                    if (state)
+                    {
+                        cubemapProjectionComboBox.SelectedIndex = (int)CubemapProjection.None;
+                        cubemapProjectionComboBox.Enabled = false;
+                    }
+                    else
+                    {
+                        cubemapProjectionComboBox.Enabled = true;
+                    }
+                }
+
                 SetupTexture(state);
             });
 
@@ -341,6 +365,8 @@ namespace GUI.Types.Renderer
 
         protected override void Dispose(bool disposing)
         {
+            base.Dispose(disposing);
+
             if (disposing)
             {
                 GLControl.PreviewKeyDown -= OnPreviewKeyDown;
@@ -365,8 +391,6 @@ namespace GUI.Types.Renderer
                 texture?.Dispose();
                 SaveAsFbo?.Dispose();
             }
-
-            base.Dispose(disposing);
         }
 
         private void OnSaveButtonClick(object sender, EventArgs e)
@@ -408,7 +432,7 @@ namespace GUI.Types.Renderer
             var t = pixmap.Encode(fs, format, 100);
         }
 
-        private SKBitmap ReadPixelsToBitmap()
+        protected override SKBitmap ReadPixelsToBitmap()
         {
             var size = ActualTextureSize;
             var bitmap = new SKBitmap((int)size.X, (int)size.Y, SKColorType.Bgra8888, SKAlphaType.Unpremul);
@@ -454,12 +478,14 @@ namespace GUI.Types.Renderer
 
         private void ResetZoom()
         {
+            MovedFromOrigin_Unzoomed = false;
+            ClickPosition = null;
             TextureScaleOld = TextureScale;
             TextureScale = 1f;
             TextureScaleChangeTime = 0f;
 
             PositionOld = Position;
-            CenterPosition();
+            ClampPosition();
 
             SetZoomLabel();
 
@@ -485,19 +511,6 @@ namespace GUI.Types.Renderer
             if (e.KeyData == (Keys.Control | Keys.S))
             {
                 OnSaveButtonClick(null, null);
-                return;
-            }
-
-            if (e.KeyData == (Keys.Control | Keys.C))
-            {
-                var title = Program.MainForm.Text;
-                Program.MainForm.Text = "Source 2 Viewer - Copying image to clipboard…";
-
-                using var bitmap = ReadPixelsToBitmap();
-                ClipboardSetImage(bitmap);
-
-                Program.MainForm.Text = title;
-
                 return;
             }
 
@@ -646,10 +659,8 @@ namespace GUI.Types.Renderer
                 }
 
                 MovedFromOrigin_Unzoomed = false;
-                return;
             }
-
-            if (MovedFromOrigin_Unzoomed)
+            else if (MovedFromOrigin_Unzoomed)
             {
                 Position.X = Math.Clamp(Position.X, Math.Min(0, -GLControl.Width + width), 0);
                 Position.Y = Math.Clamp(Position.Y, Math.Min(0, -GLControl.Height + height), 0);
@@ -658,6 +669,9 @@ namespace GUI.Types.Renderer
             {
                 CenterPosition();
             }
+
+            Position.X = MathF.Round(Position.X);
+            Position.Y = MathF.Round(Position.Y);
         }
 
         private void CenterPosition()
@@ -700,12 +714,13 @@ namespace GUI.Types.Renderer
                 OriginalHeight = texture.Height;
             }
 
-            if (shader != null)
+            var textureType = GLTextureDecoder.GetTextureTypeDefine(texture.Target);
+
+            if (shader != null && shader.Parameters.ContainsKey(textureType))
             {
                 return;
             }
 
-            var textureType = GLTextureDecoder.GetTextureTypeDefine(texture.Target);
             var arguments = new Dictionary<string, byte>
             {
                 [textureType] = 1,
@@ -834,45 +849,46 @@ namespace GUI.Types.Renderer
             GL.Disable(EnableCap.CullFace);
 
             GLLoad -= OnLoad;
+
+            // Bind paint event at the end of the processing loop so that first paint event has correctly sized gl control
+            BeginInvoke(FirstPaint);
+        }
+
+        private void FirstPaint()
+        {
+            if (GLControl.Width < ActualTextureSize.X || GLControl.Height < ActualTextureSize.Y || Svg != null)
+            {
+                // Initially scale image to fit if it's bigger than the viewport
+                TextureScale = Math.Min(
+                    GLControl.Width / ActualTextureSize.X,
+                    GLControl.Height / ActualTextureSize.Y
+                );
+
+                if (Svg != null)
+                {
+                    SetupTexture(false);
+                }
+            }
+            else
+            {
+                // Initially scale image to the minimum scale if it's very small
+                TextureScale = Math.Max(
+                    1f,
+                    0.1f * 256f / MathF.Max(ActualTextureSize.X, ActualTextureSize.Y)
+                );
+            }
+
+            SetZoomLabel();
+
+            /// This will call <see cref="CenterPosition"/> since it could not have been moved by user on first paint yet
+            ClampPosition();
+
             GLPaint += OnPaint;
         }
 
         private void OnPaint(object sender, RenderEventArgs e)
         {
-            if (FirstPaint)
-            {
-                FirstPaint = false; // OnLoad has control size of 0 for some reason
-
-                if (GLControl.Width < ActualTextureSize.X || GLControl.Height < ActualTextureSize.Y || Svg != null)
-                {
-                    // Initially scale image to fit if it's bigger than the viewport
-                    TextureScale = Math.Min(
-                        GLControl.Width / ActualTextureSize.X,
-                        GLControl.Height / ActualTextureSize.Y
-                    );
-
-                    if (Svg != null)
-                    {
-                        SetupTexture(false);
-                    }
-                }
-                else
-                {
-                    // Initially scale image to the minimum scale if it's very small
-                    TextureScale = Math.Max(
-                        1f,
-                        0.1f * 256f / MathF.Max(ActualTextureSize.X, ActualTextureSize.Y)
-                    );
-                }
-
-                SetZoomLabel();
-
-                Position = -new Vector2(
-                    GLControl.Width / 2f - ActualTextureSizeScaled.X / 2f,
-                    GLControl.Height / 2f - ActualTextureSizeScaled.Y / 2f
-                );
-            }
-            else if (NextBitmapToSet != null)
+            if (NextBitmapToSet != null)
             {
                 texture?.Dispose();
 
@@ -929,23 +945,6 @@ namespace GUI.Types.Renderer
             var scale = float.Lerp(TextureScaleOld, TextureScale, time);
 
             return (scale, position);
-        }
-
-        private static void ClipboardSetImage(SKBitmap bitmap)
-        {
-            var data = new DataObject();
-
-            using var bitmapWindows = bitmap.ToBitmap();
-            data.SetData(DataFormats.Bitmap, true, bitmapWindows);
-
-            using var pngStream = new MemoryStream();
-            using var pixels = bitmap.PeekPixels();
-            var png = pixels.Encode(pngStream, new SKPngEncoderOptions(SKPngEncoderFilterFlags.Sub, zLibLevel: 1));
-
-            bitmapWindows.Save(pngStream, System.Drawing.Imaging.ImageFormat.Png);
-            data.SetData("PNG", false, pngStream);
-
-            Clipboard.SetDataObject(data, copy: true);
         }
     }
 }

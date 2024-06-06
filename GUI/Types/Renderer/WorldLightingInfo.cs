@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Linq;
 using GUI.Types.Renderer.UniformBuffers;
 using GUI.Utils;
 using OpenTK.Graphics.OpenGL;
@@ -16,10 +17,9 @@ partial class Scene
 
     public enum LightProbeType : byte
     {
-        IndividualProbesIrradianceOnly,
+        None,
         IndividualProbes,
         ProbeAtlas,
-        Unknown,
     }
 
     public class WorldLightingInfo(Scene scene)
@@ -43,9 +43,17 @@ partial class Scene
 
         public LightProbeType LightProbeType
         {
-            get => (LightProbeType)scene.RenderAttributes.GetValueOrDefault("LightmapGameVersionNumber");
-            //set => scene.RenderAttributes["LightmapGameVersionNumber"] = (byte)value;
+            get => (LightProbeType)scene.RenderAttributes.GetValueOrDefault("SCENE_PROBE_TYPE");
+            set => scene.RenderAttributes["SCENE_PROBE_TYPE"] = (byte)value;
         }
+
+        public bool HasBakedShadowsFromLightmap => scene.RenderAttributes.GetValueOrDefault("LightmapGameVersionNumber") > 0;
+        public bool EnableDynamicShadows { get; set; } = true;
+
+        public Matrix4x4 SunViewProjection { get; internal set; }
+        public Frustum SunLightFrustum = new();
+        public float SunLightShadowBias { get; set; } = 0.001f;
+        public bool UseSceneBoundsForSunLightFrustum { get; set; }
 
         public void SetLightmapTextures(Shader shader)
         {
@@ -101,11 +109,11 @@ partial class Scene
 
         public void AddProbe(SceneLightProbe lightProbe)
         {
-            var validTextureSet = (scene.LightingInfo.LightProbeType, lightProbe) switch
+            var validTextureSet = (scene.LightingInfo.LightmapGameVersionNumber, lightProbe) switch
             {
                 (_, { Irradiance: null }) => false,
-                (LightProbeType.IndividualProbes, { DirectLightIndices: null } or { DirectLightScalars: null }) => false,
-                (LightProbeType.ProbeAtlas, { DirectLightShadows: null }) => false,
+                (1, { DirectLightIndices: null } or { DirectLightScalars: null }) => false,
+                (2, { DirectLightShadows: null }) => false,
                 _ => true,
             };
 
@@ -117,6 +125,127 @@ partial class Scene
             {
                 scene.LightingInfo.ProbeHandshakes.Add(lightProbe.HandShake, lightProbe);
             }
+        }
+
+        public void UpdateSunLightFrustum(Camera camera, float orthoSize = 512f)
+        {
+            var sunMatrix = LightingData.LightToWorld[0];
+            var sunDir = Vector3.Normalize(Vector3.Transform(Vector3.UnitX, sunMatrix with { Translation = Vector3.Zero })); // why is sun dir calculated like so?.
+
+            var bbox = orthoSize;
+            var farPlane = 8096f;
+            var nearPlaneExtend = 1000f;
+            var bias = 0.001f;
+
+            // Move near plane away from camera, in light direction, to capture shadow casters.
+            // This could be improved using scene bounds.
+            var eye = camera.Location - sunDir * nearPlaneExtend;
+
+            if (UseSceneBoundsForSunLightFrustum)
+            {
+                var staticBounds = scene.StaticOctree.Root.GetBounds();
+                var dynamicBounds = scene.DynamicOctree.Root.GetBounds();
+                var sceneBounds = staticBounds.Union(dynamicBounds);
+                var max = Math.Max(sceneBounds.Size.X, Math.Max(sceneBounds.Size.Y, sceneBounds.Size.Z));
+
+                if (max > 0 && max < orthoSize)
+                {
+                    nearPlaneExtend = max / 2f;
+                    eye = staticBounds.Center - sunDir * nearPlaneExtend;
+                    bbox = max * 1.6f;
+                    farPlane = bbox;
+                    bias = 0.01f;
+                }
+            }
+
+            var sunCameraView = Matrix4x4.CreateLookAt(eye, eye + sunDir, Vector3.UnitZ);
+            var sunCameraProjection = Matrix4x4.CreateOrthographicOffCenter(-bbox, bbox, -bbox, bbox, farPlane, -nearPlaneExtend);
+
+            SunViewProjection = sunCameraView * sunCameraProjection;
+            SunLightShadowBias = bias;
+            SunLightFrustum.Update(SunViewProjection);
+        }
+
+        public void StoreLightMappedLights_V1(List<SceneLight> lights)
+        {
+            var currentLightIndex = 0u;
+            var storedBakedLights = false;
+
+            foreach (var light in lights.OrderBy(l => l.StationaryLightIndex).Where(l => l.StationaryLightIndex >= 0)
+                .Concat(lights.Where(l => l.StationaryLightIndex == -1)))
+            {
+                if (currentLightIndex >= LightingConstants.MAX_LIGHTS)
+                {
+                    Log.Warn("Lightbinner", "Too many lights in scene. Some lights were removed.");
+                    break;
+                }
+
+                if (!storedBakedLights && light.StationaryLightIndex == -1)
+                {
+                    storedBakedLights = true;
+                    LightingData.NumLights[0] = currentLightIndex;
+                }
+
+                if (!storedBakedLights && light.StationaryLightIndex < currentLightIndex)
+                {
+                    Log.Warn("Lightbinner", "Ommited light with duplicate baked light index.");
+                    continue;
+                }
+
+                LightingData.LightPosition_Type[currentLightIndex] = new Vector4(light.Position, (int)light.Type);
+                LightingData.LightDirection_InvRange[currentLightIndex] = new Vector4(light.Direction, 1.0f / light.Range);
+
+                //Matrix4x4.Invert(light.Transform, out var lightToWorld);
+                LightingData.LightToWorld[currentLightIndex] = light.Transform;
+
+                LightingData.LightColor_Brightness[currentLightIndex] = new Vector4(RenderMaterial.SrgbGammaToLinear(light.Color), light.Brightness);
+                LightingData.LightSpotInnerOuterCosines[currentLightIndex] = new Vector4(MathF.Cos(light.SpotInnerAngle), MathF.Cos(light.SpotOuterAngle), 0.0f, 0.0f);
+                LightingData.LightFallOff[currentLightIndex] = new Vector4(light.FallOff, light.Range, light.AttenuationLinear, light.AttenuationQuadratic);
+
+                currentLightIndex++;
+            }
+
+            LightingData.NumLights[1] = currentLightIndex;
+        }
+
+        public void StoreLightMappedLights_V2(List<SceneLight> lights)
+        {
+            var currentShadowIndex = 0;
+            var totalCount = 0u;
+
+            foreach (var light in lights.OrderBy(l => l.StationaryLightIndex))
+            {
+                if (totalCount >= LightingConstants.MAX_LIGHTS)
+                {
+                    Log.Warn("Lightbinner", "Too many lights in scene. Some lights were removed.");
+                    break;
+                }
+
+                if (light.StationaryLightIndex < 0 || light.StationaryLightIndex > 3)
+                {
+                    continue;
+                }
+
+                if (currentShadowIndex != light.StationaryLightIndex)
+                {
+                    LightingData.NumLightsBakedShadowIndex[currentShadowIndex] = totalCount;
+                    currentShadowIndex = light.StationaryLightIndex;
+                }
+
+                LightingData.LightPosition_Type[totalCount] = new Vector4(light.Position, (int)light.Type);
+                LightingData.LightDirection_InvRange[totalCount] = new Vector4(light.Direction, 1.0f / light.Range);
+
+                //Matrix4x4.Invert(light.Transform, out var lightToWorld);
+                LightingData.LightToWorld[totalCount] = light.Transform;
+
+                LightingData.LightColor_Brightness[totalCount] = new Vector4(RenderMaterial.SrgbGammaToLinear(light.Color), light.Brightness);
+
+                LightingData.LightFallOff[totalCount] = new Vector4(light.FallOff, light.Range, 0.0f, 0.0f);
+
+                totalCount++;
+            }
+
+            LightingData.NumLightsBakedShadowIndex[currentShadowIndex] = totalCount;
         }
     }
 }

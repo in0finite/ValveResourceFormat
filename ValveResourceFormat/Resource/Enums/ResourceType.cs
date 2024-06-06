@@ -142,8 +142,17 @@ namespace ValveResourceFormat
         [Extension("vsmart")]
         SmartProp,
 
+        [Extension("vpram")]
+        ProcessingGraphInstance,
+
         [Extension("herolist")]
         DotaHeroList,
+
+        [Extension("vdpn")]
+        DotaPatchNotes,
+
+        [Extension("vdvn")]
+        DotaVisualNovels,
 
         [Extension("sbox")] // TODO: Managed resources can have any extension
         SboxManagedResource,

@@ -1,6 +1,6 @@
 using System.ComponentModel;
 using System.IO;
-using System.Runtime.InteropServices;
+using System.Reflection;
 using System.Windows.Forms;
 using GUI.Utils;
 using Microsoft.Win32;
@@ -10,15 +10,6 @@ namespace GUI.Forms
     partial class SettingsForm : Form
     {
         private static readonly int[] AntiAliasingSampleOptions = [0, 2, 4, 8, 16];
-
-#pragma warning disable SYSLIB1054 // Use 'LibraryImportAttribute' instead of 'DllImportAttribute' to generate P/Invoke marshalling code at compile time - this requires unsafe code
-        [DllImport("shell32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
-        private static extern void SHChangeNotify(uint wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
-#pragma warning restore SYSLIB1054
-
-        private const int SHCNE_ASSOCCHANGED = 0x8000000;
-        private const int SHCNF_FLUSH = 0x1000;
 
         public SettingsForm()
         {
@@ -42,6 +33,11 @@ namespace GUI.Forms
             fovInput.Value = Settings.Config.FieldOfView;
             vsyncCheckBox.Checked = Settings.Config.Vsync != 0;
             displayFpsCheckBox.Checked = Settings.Config.DisplayFps != 0;
+            openExplorerOnStartCheckbox.Checked = Settings.Config.OpenExplorerOnStart != 0;
+
+            var quickPreviewFlags = (Settings.QuickPreviewFlags)Settings.Config.QuickFilePreview;
+            quickPreviewCheckbox.Checked = (quickPreviewFlags & Settings.QuickPreviewFlags.Enabled) != 0;
+            quickPreviewSoundsCheckbox.Checked = (quickPreviewFlags & Settings.QuickPreviewFlags.AutoPlaySounds) != 0;
 
             var strings = new string[AntiAliasingSampleOptions.Length];
             var selectedSamples = -1;
@@ -127,25 +123,6 @@ namespace GUI.Forms
             gamePaths.Items.Add(dlg.SelectedPath);
         }
 
-        private void OpenBackgroundColorPicker(object sender, EventArgs e)
-        {
-            // Run the dialog on a separate thread, otherwise it will not work
-            // when opening settings while opentk is in focus
-            new System.Threading.Thread(() =>
-            {
-                var colorPicker = new ColorDialog
-                {
-                    Color = Settings.BackgroundColor,
-                };
-
-                // Update the text box color if the user clicks OK
-                if (colorPicker.ShowDialog() == DialogResult.OK)
-                {
-                    Settings.BackgroundColor = colorPicker.Color;
-                }
-            }).Start();
-        }
-
         private void OnMaxTextureSizeValueChanged(object sender, EventArgs e)
         {
             Settings.Config.MaxTextureSize = (int)maxTextureSizeInput.Value;
@@ -172,14 +149,52 @@ namespace GUI.Forms
             Settings.Config.DisplayFps = displayFpsCheckBox.Checked ? 1 : 0;
         }
 
+        private void OnOpenExplorerOnStartValueChanged(object sender, EventArgs e)
+        {
+            Settings.Config.OpenExplorerOnStart = openExplorerOnStartCheckbox.Checked ? 1 : 0;
+        }
+
+        private void OnQuickPreviewCheckboxChanged(object sender, EventArgs e) => SetQuickPreviewSetting();
+        private void OnQuickPreviewSoundsCheckboxChanged(object sender, EventArgs e) => SetQuickPreviewSetting();
+
+        private void SetQuickPreviewSetting()
+        {
+            Settings.QuickPreviewFlags value = 0;
+
+            if (quickPreviewCheckbox.Checked)
+            {
+                value |= Settings.QuickPreviewFlags.Enabled;
+            }
+
+            if (quickPreviewSoundsCheckbox.Checked)
+            {
+                value |= Settings.QuickPreviewFlags.AutoPlaySounds;
+            }
+
+            Settings.Config.QuickFilePreview = (int)value;
+        }
+
         private void OnRegisterAssociationButtonClick(object sender, EventArgs e) => RegisterFileAssociation();
 
         public static void RegisterFileAssociation()
         {
-            var extension = ".vpk";
-            var progId = $"VRF.Source2Viewer{extension}";
+            const string extension = ".vpk";
+            const string progId = $"VRF.Source2Viewer{extension}";
+
             var applicationPath = Application.ExecutablePath;
 
+            // copy vpk icon to settings folder
+            var vpkIconPath = Path.Join(Settings.SettingsFolder, "vpk.ico");
+
+            if (!File.Exists(vpkIconPath))
+            {
+                var assembly = Assembly.GetExecutingAssembly();
+                using var iconStream = assembly.GetManifestResourceStream("GUI.Utils.vpk.ico");
+                using var iconDiskStream = File.OpenWrite(vpkIconPath);
+                iconStream.CopyTo(iconDiskStream);
+            }
+
+            // .vpk file extension
             using var reg = Registry.CurrentUser.CreateSubKey(@$"Software\Classes\{extension}\OpenWithProgids");
             reg.SetValue(progId, Array.Empty<byte>(), RegistryValueKind.None);
 
@@ -189,6 +204,9 @@ namespace GUI.Forms
             using var reg3 = reg2.CreateSubKey(@"shell\open\command");
             reg3.SetValue(null, $"\"{applicationPath}\" \"%1\"");
 
+            using var regIco = reg2.CreateSubKey("DefaultIcon");
+            regIco.SetValue(null, vpkIconPath);
+
             // Protocol
             using var regProtocol = Registry.CurrentUser.CreateSubKey(@"Software\Classes\vpk");
             regProtocol.SetValue(string.Empty, "URL:Valve Pak protocol");
@@ -197,7 +215,7 @@ namespace GUI.Forms
             using var regProtocolOpen = regProtocol.CreateSubKey(@"shell\open\command");
             regProtocolOpen.SetValue(null, $"\"{applicationPath}\" \"%1\"");
 
-            SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_FLUSH, IntPtr.Zero, IntPtr.Zero);
+            NativeMethods.SHChangeNotify(NativeMethods.SHCNE_ASSOCCHANGED, NativeMethods.SHCNF_FLUSH, IntPtr.Zero, IntPtr.Zero);
 
             MessageBox.Show(
                 $"Registered .vpk file association as well as \"vpk:\" protocol link handling.{Environment.NewLine}{Environment.NewLine}If you move {Path.GetFileName(applicationPath)}, you will have to register it again.",

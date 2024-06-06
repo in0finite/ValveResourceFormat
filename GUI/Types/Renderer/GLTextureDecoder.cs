@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Threading;
+using GUI.Controls;
 using GUI.Utils;
 using OpenTK;
 using OpenTK.Graphics;
@@ -48,9 +49,10 @@ class GLTextureDecoder : IHardwareTextureDecoder, IDisposable
         }
     }
 
-    private readonly VrfGuiContext guiContext = new(null, null);
+    private readonly VrfGuiContext guiContext = new();
     private readonly AutoResetEvent queueUpdateEvent = new(false);
     private readonly ConcurrentQueue<DecodeRequest> decodeQueue = new();
+    private readonly object threadStartupLock = new();
 
     private Thread GLThread;
     private bool IsRunning;
@@ -60,21 +62,29 @@ class GLTextureDecoder : IHardwareTextureDecoder, IDisposable
     private Framebuffer Framebuffer;
 #pragma warning restore CA2213
 
+    public void StartThread()
+    {
+        lock (threadStartupLock)
+        {
+            if (GLThread == null)
+            {
+                IsRunning = true;
+
+                // create a thread context for OpenGL
+                GLThread = new Thread(Initialize_NoExcept)
+                {
+                    IsBackground = true,
+                    Name = nameof(GLTextureDecoder),
+                    Priority = ThreadPriority.AboveNormal,
+                };
+                GLThread.Start();
+            }
+        }
+    }
+
     public bool Decode(SKBitmap bitmap, Resource resource, uint depth, CubemapFace face, uint mipLevel, TextureCodec decodeFlags)
     {
-        if (GLThread == null)
-        {
-            IsRunning = true;
-
-            // create a thread context for OpenGL
-            GLThread = new Thread(Initialize_NoExcept)
-            {
-                IsBackground = true,
-                Name = nameof(GLTextureDecoder),
-                Priority = ThreadPriority.AboveNormal,
-            };
-            GLThread.Start();
-        }
+        StartThread();
 
         if (!IsRunning)
         {
@@ -118,8 +128,10 @@ class GLTextureDecoder : IHardwareTextureDecoder, IDisposable
 
     private void Initialize()
     {
-        GLControl = new GLControl(new GraphicsMode(new ColorFormat(8, 8, 8, 8)), 4, 6, GraphicsContextFlags.Offscreen);
+        GLControl = new GLControl(new GraphicsMode(new ColorFormat(8, 8, 8, 8)), GLViewerControl.OpenGlVersionMajor, GLViewerControl.OpenGlVersionMinor, GraphicsContextFlags.Offscreen);
         GLControl.MakeCurrent();
+
+        GLViewerControl.CheckOpenGL();
 
         GL.GetInternalformat(ImageTarget.Texture2D, SizedInternalFormat.Rgba8, InternalFormatParameter.InternalformatPreferred, 1, out int internalFormatPreferred);
         Framebuffer = Framebuffer.Prepare(4, 4, 0, new((PixelInternalFormat)internalFormatPreferred, PixelFormat.Bgra, PixelType.UnsignedByte), null);
@@ -205,7 +217,11 @@ class GLTextureDecoder : IHardwareTextureDecoder, IDisposable
         var pixels = request.Bitmap.GetPixels(out var length);
 
         Debug.Assert(request.Bitmap.ColorType == SKColorType.Bgra8888);
-        Debug.Assert(length == inputTexture.Width * inputTexture.Height * 4);
+
+        if (length > inputTexture.Width * inputTexture.Height * 4)
+        {
+            return false;
+        }
 
         // extract pixels from framebuffer
         GL.Flush();

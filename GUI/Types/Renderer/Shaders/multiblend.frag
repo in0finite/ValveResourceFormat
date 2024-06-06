@@ -1,9 +1,15 @@
 #version 460
 
 // Render modes -- Switched on/off by code
-#include "common/utils.glsl"
-#include "common/rendermodes.glsl"
-#define renderMode_Terrain_Blend 0
+#define renderMode_FullBright 0
+#define renderMode_Color 0
+#define renderMode_Normals 0
+#define renderMode_Roughness 0
+#define renderMode_Tangents 0
+#define renderMode_BumpMap 0
+#define renderMode_BumpNormals 0
+#define renderMode_Illumination 0
+#define renderMode_TerrainBlend 0
 #define renderMode_Tint 0
 
 //Parameter defines - These are default values and can be overwritten based on material/model parameters
@@ -26,16 +32,16 @@ in vec4 vVertexColor;
 in vec2 vTexCoordOut;
 in vec2 vTexCoord1Out;
 #if (F_TWO_LAYER_BLEND == 0)
-in vec2 vTexCoord2Out;
-in vec2 vTexCoord3Out;
+    in vec2 vTexCoord2Out;
+    in vec2 vTexCoord3Out;
 #endif
 
 out vec4 outputColor;
 
-uniform sampler2D g_tColor0;
-uniform sampler2D g_tColor1;
-uniform sampler2D g_tColor2;
-uniform sampler2D g_tColor3;
+uniform sampler2D g_tColor0; // SrgbRead(true)
+uniform sampler2D g_tColor1; // SrgbRead(true)
+uniform sampler2D g_tColor2; // SrgbRead(true)
+uniform sampler2D g_tColor3; // SrgbRead(true)
 
 uniform sampler2D g_tNormal0;
 uniform sampler2D g_tNormal1;
@@ -47,27 +53,30 @@ uniform sampler2D g_tSpecular1;
 uniform sampler2D g_tSpecular2;
 uniform sampler2D g_tSpecular3;
 
-uniform sampler2D g_tTintMasks;
+#if (F_TINT_MASK == 1)
+    uniform sampler2D g_tTintMasks;
+
+    //Interpolate between two tint colors based on the tint mask.
+    vec3 interpolateTint(int id, vec3 tint1, vec3 tint2, vec2 coords)
+    {
+        float maskValue = texture(g_tTintMasks, coords)[id];
+        return mix(tint1, tint2, maskValue);
+    }
+#endif
 
 uniform vec4 g_vGlobalTint = vec4(1.0);
-uniform vec4 g_vColorTint0;
-uniform vec4 g_vColorTint1;
-uniform vec4 g_vColorTint2;
-uniform vec4 g_vColorTint3;
-uniform vec4 g_vColorTintB0;
-uniform vec4 g_vColorTintB1;
-uniform vec4 g_vColorTintB2;
-uniform vec4 g_vColorTintB3;
+uniform vec4 g_vColorTint0 = vec4(1.0);
+uniform vec4 g_vColorTint1 = vec4(1.0);
+uniform vec4 g_vColorTint2 = vec4(1.0);
+uniform vec4 g_vColorTint3 = vec4(1.0);
+uniform vec4 g_vColorTintB0 = vec4(1.0);
+uniform vec4 g_vColorTintB1 = vec4(1.0);
+uniform vec4 g_vColorTintB2 = vec4(1.0);
+uniform vec4 g_vColorTintB3 = vec4(1.0);
 
+#include "common/utils.glsl"
 #include "common/ViewConstants.glsl"
 uniform float g_flBumpStrength = 1.0;
-
-//Interpolate between two tint colors based on the tint mask.
-vec3 interpolateTint(int id, vec3 tint1, vec3 tint2, vec2 coords)
-{
-    float maskValue = texture(g_tTintMasks, coords)[id];
-    return mix(tint1, tint2, maskValue);
-}
 
 // from texturing.glsl
 float ApplyBlendModulation(float blendFactor, float blendMask, float blendSoftness)
@@ -79,12 +88,6 @@ float ApplyBlendModulation(float blendFactor, float blendMask, float blendSoftne
 }
 
 #if (F_NORMAL_MAP == 1)
-    vec3 DecodeNormal(vec4 bumpNormal)
-    {
-        vec2 temp = vec2(bumpNormal.w, bumpNormal.y) * 2.0 - 1.0;
-        temp.y = -temp.y;
-        return vec3(temp, sqrt(saturate(1 - dot(temp,temp))));
-    }
 
     //Calculate the normal of this fragment in world space
     vec3 calculateWorldNormal(vec3 normalMap, vec3 normal, vec3 tangent, vec3 bitangent)
@@ -110,7 +113,6 @@ void main()
     vec4 color3 = texture(g_tColor3, vTexCoord3Out);
 #endif
 
-
     // Get blend weights
     float blendWeight1 = ApplyBlendModulation(vBlendWeights.x, color1.w, vBlendAlphas.x);
 
@@ -134,7 +136,7 @@ void main()
     //Get specular
     vec4 specular0 = texture(g_tSpecular0, vTexCoordOut);
     vec4 specular1 = texture(g_tSpecular1, vTexCoord1Out);
-#if F_TWO_LAYER_BLEND == 0
+#if (F_TWO_LAYER_BLEND == 0)
     vec4 specular2 = texture(g_tSpecular2, vTexCoord2Out);
     vec4 specular3 = texture(g_tSpecular3, vTexCoord3Out);
 #endif
@@ -142,11 +144,11 @@ void main()
 
     //Simple blending
     //Calculate each of the 4 colours to blend
-#if F_TINT_MASK
+#if (F_TINT_MASK == 1)
     // Include tint mask
     vec3 tint0 = SrgbGammaToLinear(interpolateTint(0, g_vColorTintB0.rgb, g_vColorTint0.rgb, vTexCoordOut));
     vec3 tint1 = SrgbGammaToLinear(interpolateTint(1, g_vColorTintB1.rgb, g_vColorTint1.rgb, vTexCoord1Out));
-    #if F_TWO_LAYER_BLEND == 0
+    #if (F_TWO_LAYER_BLEND == 0)
         vec3 tint2 = SrgbGammaToLinear(interpolateTint(2, g_vColorTintB2.rgb, g_vColorTint2.rgb, vTexCoord2Out));
         vec3 tint3 = SrgbGammaToLinear(interpolateTint(3, g_vColorTintB3.rgb, g_vColorTint3.rgb, vTexCoord3Out));
     #endif
@@ -159,12 +161,12 @@ void main()
 
     vec3 c0 = blendWeight0 * color0.rgb * tint0;
     vec3 c1 = blendWeight1 * color1.rgb * tint1;
-    #if F_TWO_LAYER_BLEND == 0
+    #if (F_TWO_LAYER_BLEND == 0)
         vec3 c2 = blendWeight2 * color2.rgb * tint2;
         vec3 c3 = blendWeight3 * color3.rgb * tint3;
     #endif
 
-#if F_TWO_LAYER_BLEND == 0
+#if (F_TWO_LAYER_BLEND == 0)
     //Add up the result
     vec3 finalColor = c0 + c1 + c2 + c3;
 #else
@@ -172,17 +174,16 @@ void main()
     vec3 finalColor = c0 + c1;
 #endif
 
-
     finalColor *= vVertexColor.rgb * SrgbGammaToLinear(g_vGlobalTint.rgb);
     finalColor = SrgbLinearToGamma(finalColor);
 
 #if (F_NORMAL_MAP == 1)
-    //Get normal
+    // Get normal
     // horribly, they actually correct normal orientations to match with texcoord rotation. We're not doing that.
     vec4 normal0 = texture(g_tNormal0, vTexCoordOut);
     vec4 normal1 = texture(g_tNormal1, vTexCoord1Out);
 
-    #if F_TWO_LAYER_BLEND == 0
+    #if (F_TWO_LAYER_BLEND == 0)
         vec4 normal2 = texture(g_tNormal2, vTexCoord2Out);
         vec4 normal3 = texture(g_tNormal3, vTexCoord3Out);
 
@@ -194,7 +195,7 @@ void main()
     #endif
 
     //Reconstruct the tangent vector from the map
-    vec3 finalBumpNormal = DecodeNormal(bumpNormal);
+    vec3 finalBumpNormal = DecodeDxt5Normal(bumpNormal);
 
     finalBumpNormal.xy *= g_flBumpStrength;
 
@@ -211,17 +212,18 @@ void main()
     //Get the direction from the fragment to the light - light position == camera position for now
     vec3 lightDirection = normalize(g_vCameraPositionWs - vFragPosition);
 
-#if renderMode_FullBright == 1
-    float illumination = 1.0;
-#else
     //Calculate half-lambert lighting
     float illumination = dot(finalNormal, lightDirection);
     illumination = illumination * 0.5 + 0.5;
     illumination = pow2(illumination);
     illumination = min(illumination + 0.3, 1.0);
-#endif
 
-#if F_TWO_LAYER_BLEND == 0
+    if (g_iRenderMode == renderMode_FullBright)
+    {
+        illumination = 1.0;
+    }
+
+#if (F_TWO_LAYER_BLEND == 0)
     //Calculate specular
     vec4 blendSpecular = blendWeight0 * specular0 + blendWeight1 * specular1 + blendWeight2 * specular2 + blendWeight3 * specular3;
 #else
@@ -234,35 +236,42 @@ void main()
 
     outputColor = vec4(illumination * finalColor.rgb + vec3(0.7) * specular, vVertexColor.a);
 
-#if renderMode_Color == 1
-    outputColor = vec4(finalColor, 1.0);
-#endif
-
-#if renderMode_Terrain_Blend == 1
-    outputColor = vec4(vBlendWeights.xyz, 1.0);
-#endif
-
-#if renderMode_Tint == 1
-    outputColor = vec4(vVertexColor.rgb, 1.0);
-#endif
-
-#if renderMode_Normals == 1
-    outputColor = vec4(PackToColor(vNormalOut), 1.0);
-#endif
-
-#if renderMode_Tangents == 1 && F_NORMAL_MAP == 1
-    outputColor = vec4(PackToColor(tangent), 1.0);
-#endif
-
-#if renderMode_BumpMap == 1 && F_NORMAL_MAP == 1
-    outputColor = vec4(bumpNormal.xyz, 1.0);
-#endif
-
-#if renderMode_BumpNormals == 1
-    outputColor = vec4(PackToColor(finalNormal), 1.0);
-#endif
-
-#if renderMode_Illumination == 1
-    outputColor = vec4(vec3(illumination), 1.0);
+    if (g_iRenderMode == renderMode_Color)
+    {
+        outputColor = vec4(finalColor, 1.0);
+    }
+    else if (g_iRenderMode == renderMode_Roughness)
+    {
+        outputColor.rgb = pow2(1 - blendSpecular.xxx);
+    }
+    else if (g_iRenderMode == renderMode_TerrainBlend)
+    {
+        outputColor = vec4(vBlendWeights.xyz, 1.0);
+    }
+    else if (g_iRenderMode == renderMode_Tint)
+    {
+        outputColor = vec4(vVertexColor.rgb, 1.0);
+    }
+    else if (g_iRenderMode == renderMode_Normals)
+    {
+        outputColor = vec4(PackToColor(vNormalOut), 1.0);
+    }
+    else if (g_iRenderMode == renderMode_BumpNormals)
+    {
+        outputColor = vec4(PackToColor(finalNormal), 1.0);
+    }
+    else if (g_iRenderMode == renderMode_Illumination)
+    {
+        outputColor = vec4(vec3(illumination), 1.0);
+    }
+#if (F_NORMAL_MAP == 1)
+    else if (g_iRenderMode == renderMode_Tangents)
+    {
+        outputColor = vec4(PackToColor(tangent), 1.0);
+    }
+    else if (g_iRenderMode == renderMode_BumpMap)
+    {
+        outputColor = vec4(PackToColor(finalBumpNormal), 1.0);
+    }
 #endif
 }

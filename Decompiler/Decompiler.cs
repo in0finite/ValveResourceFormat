@@ -14,7 +14,6 @@ using McMaster.Extensions.CommandLineUtils;
 using SteamDatabase.ValvePak;
 using ValveResourceFormat;
 using ValveResourceFormat.Blocks;
-using ValveResourceFormat.ClosedCaptions;
 using ValveResourceFormat.CompiledShader;
 using ValveResourceFormat.IO;
 using ValveResourceFormat.ResourceTypes;
@@ -54,10 +53,10 @@ namespace Decompiler
         [Option("-b|--block", "Print the content of a specific block, example: DATA, RERL, REDI, NTRO.", CommandOptionType.SingleValue)]
         public string BlockToPrint { get; }
 
-        [Option("--threads", "If more than 1, files will be processed concurrently.", CommandOptionType.SingleValue)]
+        [Option("--threads", "If higher than 1, files will be processed concurrently.", CommandOptionType.SingleValue)]
         public int MaxParallelismThreads { get; } = 1;
 
-        [Option("--vpk_dir", "Write a file with files in given VPK and their CRC.", CommandOptionType.NoValue)]
+        [Option("--vpk_dir", "Print a list of files in given VPK and information about them.", CommandOptionType.NoValue)]
         public bool OutputVPKDir { get; }
 
         [Option("--vpk_verify", "Verify checksums and signatures.", CommandOptionType.NoValue)]
@@ -86,6 +85,9 @@ namespace Decompiler
 
         [Option("--gltf_textures_adapt", "Whether to perform any glTF spec adaptations on textures (e.g. split metallic map).", CommandOptionType.NoValue)]
         public bool GltfExportAdaptTextures { get; }
+
+        [Option("--gltf_export_extras", "Export additional Mesh properties into glTF extras", CommandOptionType.NoValue)]
+        public bool GltfExportExtras { get; }
 
         [Option("--tools_asset_info_short", "Whether to print only file paths for tools_asset_info files.", CommandOptionType.NoValue)]
         public bool ToolsAssetInfoShort { get; }
@@ -201,7 +203,7 @@ namespace Decompiler
                             return false;
                         }
 
-                        return s.EndsWith("_c", StringComparison.Ordinal) || s.EndsWith(".vcs", StringComparison.Ordinal);
+                        return s.EndsWith(GameFileLoader.CompiledFileSuffix, StringComparison.Ordinal) || s.EndsWith(".vcs", StringComparison.Ordinal);
                     })
                     .ToList();
 
@@ -384,18 +386,15 @@ namespace Decompiler
                 }
             }
 
-            var magicData = new byte[4];
+            Span<byte> magicData = stackalloc byte[4];
 
-            int bytesRead;
-            var totalRead = 0;
-            while ((bytesRead = stream.Read(magicData, totalRead, magicData.Length - totalRead)) != 0)
+            if (stream.Length >= magicData.Length)
             {
-                totalRead += bytesRead;
+                stream.Read(magicData);
+                stream.Seek(-magicData.Length, SeekOrigin.Current);
             }
 
-            stream.Seek(-totalRead, SeekOrigin.Current);
-
-            var magic = BitConverter.ToUInt32(magicData, 0);
+            var magic = BitConverter.ToUInt32(magicData);
 
             switch (magic)
             {
@@ -403,7 +402,6 @@ namespace Decompiler
                 case ShaderFile.MAGIC: ParseVCS(path, stream, originalPath); return;
                 case ToolsAssetInfo.MAGIC2:
                 case ToolsAssetInfo.MAGIC: ParseToolsAssetInfo(path, stream); return;
-                case ClosedCaptions.MAGIC: ParseClosedCaptions(path, stream); return;
             }
 
             if (BinaryKV3.IsBinaryKV3(magic))
@@ -414,9 +412,34 @@ namespace Decompiler
 
             var pathExtension = Path.GetExtension(path);
 
+            const uint Source1Vcs = 0x06;
+            if (CollectStats && pathExtension == ".vcs" && magic == Source1Vcs)
+            {
+                return;
+            }
+
             if (pathExtension == ".vfont")
             {
                 ParseVFont(path);
+
+                return;
+            }
+            else if (FileExtract.TryExtractNonResource(stream, path, out var content))
+            {
+                if (OutputFile != null)
+                {
+                    var extension = Path.GetExtension(content.FileName);
+                    path = Path.ChangeExtension(path, extension);
+
+                    var outFilePath = GetOutputPath(path);
+                    DumpContentFile(outFilePath, content);
+                }
+                else
+                {
+                    var output = Encoding.UTF8.GetString(content.Data);
+                    Console.WriteLine(output);
+                }
+                content.Dispose();
 
                 return;
             }
@@ -436,7 +459,7 @@ namespace Decompiler
                 {
                     extension = Path.GetExtension(path);
 
-                    if (extension.EndsWith("_c", StringComparison.Ordinal))
+                    if (extension.EndsWith(GameFileLoader.CompiledFileSuffix, StringComparison.Ordinal))
                     {
                         extension = extension[..^2];
                     }
@@ -609,22 +632,6 @@ namespace Decompiler
             }
         }
 
-        private void ParseClosedCaptions(string path, Stream stream)
-        {
-            var captions = new ClosedCaptions();
-
-            try
-            {
-                captions.Read(path, stream);
-
-                Console.WriteLine(captions.ToString());
-            }
-            catch (Exception e)
-            {
-                LogException(e, path);
-            }
-        }
-
         private void ParseKV3(string path, Stream stream)
         {
             var kv3 = new BinaryKV3();
@@ -708,7 +715,7 @@ namespace Decompiler
                             return RecursiveSearchArchives;
                         }
 
-                        return x.Key.EndsWith("_c", StringComparison.Ordinal);
+                        return x.Key.EndsWith(GameFileLoader.CompiledFileSuffix, StringComparison.Ordinal);
                     }).ToList();
                 }
 
@@ -907,11 +914,13 @@ namespace Decompiler
             }
 
             using var fileLoader = new GameFileLoader(package, package.FileName);
+            var progressReporter = new Progress<string>(progress => Console.WriteLine($"--- {progress}"));
             var gltfModelExporter = new GltfModelExporter(fileLoader)
             {
                 ExportMaterials = GltfExportMaterials,
                 AdaptTextures = GltfExportAdaptTextures,
-                ProgressReporter = new Progress<string>(progress => Console.WriteLine($"--- {progress}")),
+                ExportExtras = GltfExportExtras,
+                ProgressReporter = progressReporter,
             };
 
             foreach (var file in entries)
@@ -944,7 +953,7 @@ namespace Decompiler
                     package.ReadEntry(file, rawFileData);
 
                     // Not a file that can be decompiled, or no decompilation was requested
-                    if (!Decompile || !type.EndsWith("_c", StringComparison.Ordinal))
+                    if (!Decompile || !type.EndsWith(GameFileLoader.CompiledFileSuffix, StringComparison.Ordinal))
                     {
                         if (OutputFile != null)
                         {
@@ -973,7 +982,8 @@ namespace Decompiler
 
                     extension = FileExtract.GetExtension(resource) ?? type[..^2];
 
-                    if (GltfModelExporter.CanExport(resource))
+                    // TODO: This is forcing gltf export - https://github.com/ValveResourceFormat/ValveResourceFormat/issues/782
+                    if (GltfModelExporter.CanExport(resource) && resource.ResourceType != ResourceType.EntityLump)
                     {
                         var outputExtension = GltfExportFormat;
                         var outputFile = Path.Combine(OutputFile, Path.ChangeExtension(filePath, outputExtension));
@@ -985,7 +995,7 @@ namespace Decompiler
                         continue;
                     }
 
-                    using var contentFile = FileExtract.Extract(resource, fileLoader);
+                    using var contentFile = FileExtract.Extract(resource, fileLoader, progressReporter);
 
                     if (OutputFile != null)
                     {
@@ -1055,7 +1065,7 @@ namespace Decompiler
 
                 return Path.Combine(OutputFile, inputPath);
             }
-            else if (useOutputAsDirectory)
+            else if (useOutputAsDirectory || Directory.Exists(OutputFile))
             {
                 return Path.Combine(OutputFile, inputPath);
             }
@@ -1218,6 +1228,7 @@ namespace Decompiler
                 var gltfModelExporter = new GltfModelExporter(new NullFileLoader())
                 {
                     ExportMaterials = false,
+                    ExportExtras = GltfExportExtras,
                     ProgressReporter = new Progress<string>(progress => { }),
                 };
                 gltfModelExporter.Export(resource, null); // Filename passed as null which tells exporter to write gltf to a null stream

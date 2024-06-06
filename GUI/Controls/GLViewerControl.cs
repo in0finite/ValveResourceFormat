@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Windows.Forms;
 using GUI.Types.Renderer;
@@ -15,6 +16,9 @@ namespace GUI.Controls
 {
     partial class GLViewerControl : ControlPanelView
     {
+        public const int OpenGlVersionMajor = 4;
+        public const int OpenGlVersionMinor = 6;
+
         protected override Panel ControlsPanel => controlsPanel;
         static readonly TimeSpan FpsUpdateTimeSpan = TimeSpan.FromSeconds(0.1);
 
@@ -30,9 +34,8 @@ namespace GUI.Controls
         public event EventHandler<RenderEventArgs> GLPaint;
         public event EventHandler GLLoad;
         public Action<GLViewerControl> GLPostLoad { get; set; }
-        private static bool hasCheckedOpenGL;
 
-        private readonly Types.Renderer.TextRenderer textRenderer;
+        protected readonly Types.Renderer.TextRenderer textRenderer;
 
         protected Form FullScreenForm { get; private set; }
         protected PickingTexture Picker { get; set; }
@@ -41,7 +44,7 @@ namespace GUI.Controls
         Point MouseDelta;
         Point MousePreviousPosition;
         Point InitialMousePosition;
-        TrackedKeys CurrentlyPressedKeys;
+        protected TrackedKeys CurrentlyPressedKeys;
 
         private long lastUpdate;
         private long lastFpsUpdate;
@@ -64,7 +67,11 @@ namespace GUI.Controls
             flags |= GraphicsContextFlags.Debug;
 #endif
 
-            GLControl = new GLControl(new GraphicsMode(32, 1, 0, 0, 0, 2), 4, 6, flags);
+            GLControl = new GLControl(new GraphicsMode(32, 1, 0, 0, 0, 2), OpenGlVersionMajor, OpenGlVersionMinor, flags)
+            {
+                Dock = DockStyle.Fill
+            };
+
             GLControl.Load += OnLoad;
             GLControl.Paint += OnPaint;
             GLControl.Resize += OnResize;
@@ -81,7 +88,6 @@ namespace GUI.Controls
             GLControl.VisibleChanged += OnVisibleChanged;
             Disposed += OnDisposed;
 
-            GLControl.Dock = DockStyle.Fill;
             glControlContainer.Controls.Add(GLControl);
 
             textRenderer = new(guiContext);
@@ -114,26 +120,8 @@ namespace GUI.Controls
                 var title = Program.MainForm.Text;
                 Program.MainForm.Text = "Source 2 Viewer - Copying image to clipboard…";
 
-                using var bitmap = new SKBitmap(GLDefaultFramebuffer.Width, GLDefaultFramebuffer.Height, SKColorType.Bgra8888, SKAlphaType.Opaque);
-                var pixels = bitmap.GetPixels(out var length);
-
-                if (MainFramebuffer != GLDefaultFramebuffer)
-                {
-                    var (w, h) = (GLControl.Width, GLControl.Height);
-                    GL.BlitNamedFramebuffer(MainFramebuffer.FboHandle, GLDefaultFramebuffer.FboHandle, 0, 0, w, h, 0, 0, w, h, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
-                }
-
-                GL.Flush();
-                GL.Finish();
-                GL.ReadPixels(0, 0, GLDefaultFramebuffer.Width, GLDefaultFramebuffer.Height, PixelFormat.Bgra, PixelType.UnsignedByte, pixels);
-
-                // Flip y
-                using var canvas = new SKCanvas(bitmap);
-                canvas.Scale(1, -1, 0, bitmap.Height / 2f);
-                canvas.DrawBitmap(bitmap, new SKPoint());
-
-                using var bitmapWindows = bitmap.ToBitmap();
-                Clipboard.SetImage(bitmapWindows);
+                using var bitmap = ReadPixelsToBitmap();
+                ClipboardSetImage(bitmap);
 
                 Program.MainForm.Text = title;
 
@@ -162,6 +150,29 @@ namespace GUI.Controls
                 FullScreenForm.Focus();
                 FullScreenForm.FormClosed += OnFullScreenFormClosed;
             }
+        }
+
+        protected virtual SKBitmap ReadPixelsToBitmap()
+        {
+            var bitmap = new SKBitmap(GLDefaultFramebuffer.Width, GLDefaultFramebuffer.Height, SKColorType.Bgra8888, SKAlphaType.Opaque);
+            var pixels = bitmap.GetPixels(out var length);
+
+            if (MainFramebuffer != GLDefaultFramebuffer)
+            {
+                var (w, h) = (GLControl.Width, GLControl.Height);
+                GL.BlitNamedFramebuffer(MainFramebuffer.FboHandle, GLDefaultFramebuffer.FboHandle, 0, 0, w, h, 0, 0, w, h, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
+            }
+
+            GL.Flush();
+            GL.Finish();
+            GL.ReadPixels(0, 0, GLDefaultFramebuffer.Width, GLDefaultFramebuffer.Height, PixelFormat.Bgra, PixelType.UnsignedByte, pixels);
+
+            // Flip y
+            using var canvas = new SKCanvas(bitmap);
+            canvas.Scale(1, -1, 0, bitmap.Height / 2f);
+            canvas.DrawBitmap(bitmap, new SKPoint());
+
+            return bitmap;
         }
 
         private void OnKeyUp(object sender, KeyEventArgs e)
@@ -203,8 +214,8 @@ namespace GUI.Controls
         {
             if (GLControl.Visible)
             {
-                GLControl.Focus();
                 HandleResize();
+                GLControl.Focus();
             }
         }
 
@@ -370,8 +381,26 @@ namespace GUI.Controls
 
         private void OnLoad(object sender, EventArgs e)
         {
+            GLControl.Load -= OnLoad;
             GLControl.MakeCurrent();
             GLControl.VSync = Settings.Config.Vsync != 0;
+
+            GL.Enable(EnableCap.DebugOutput);
+            GL.DebugMessageCallback(OpenGLDebugMessageDelegate, IntPtr.Zero);
+
+#if DEBUG
+            GL.Enable(EnableCap.DebugOutputSynchronous);
+
+            // Filter out performance warnings
+            GL.DebugMessageControl(DebugSourceControl.DebugSourceApi, DebugTypeControl.DebugTypeOther, DebugSeverityControl.DebugSeverityNotification, 0, Array.Empty<int>(), false);
+
+            // Filter out debug group push/pops
+            GL.DebugMessageControl(DebugSourceControl.DebugSourceApplication, DebugTypeControl.DontCare, DebugSeverityControl.DebugSeverityNotification, 0, Array.Empty<int>(), false);
+#else
+            // Only log high severity messages in release builds
+            GL.DebugMessageControl(DebugSourceControl.DontCare, DebugTypeControl.DontCare, DebugSeverityControl.DontCare, 0, Array.Empty<int>(), false);
+            GL.DebugMessageControl(DebugSourceControl.DontCare, DebugTypeControl.DontCare, DebugSeverityControl.DebugSeverityHigh, 0, Array.Empty<int>(), true);
+#endif
 
             CheckOpenGL();
             MaxSamples = GL.GetInteger(GetPName.MaxSamples);
@@ -396,23 +425,6 @@ namespace GUI.Controls
             GL.ClipControl(ClipOrigin.LowerLeft, ClipDepthMode.ZeroToOne);
             GL.DepthFunc(DepthFunction.Greater);
             GL.ClearDepth(0.0f);
-
-            GL.Enable(EnableCap.DebugOutput);
-            GL.DebugMessageCallback(OpenGLDebugMessageDelegate, IntPtr.Zero);
-
-#if DEBUG
-            GL.Enable(EnableCap.DebugOutputSynchronous);
-
-            // Filter out performance warnings
-            GL.DebugMessageControl(DebugSourceControl.DebugSourceApi, DebugTypeControl.DebugTypeOther, DebugSeverityControl.DebugSeverityNotification, 0, Array.Empty<int>(), false);
-
-            // Filter out debug group push/pops
-            GL.DebugMessageControl(DebugSourceControl.DebugSourceApplication, DebugTypeControl.DontCare, DebugSeverityControl.DebugSeverityNotification, 0, Array.Empty<int>(), false);
-#else
-            // Only log high severity messages in release builds
-            GL.DebugMessageControl(DebugSourceControl.DontCare, DebugTypeControl.DontCare, DebugSeverityControl.DontCare, 0, Array.Empty<int>(), false);
-            GL.DebugMessageControl(DebugSourceControl.DontCare, DebugTypeControl.DontCare, DebugSeverityControl.DebugSeverityHigh, 0, Array.Empty<int>(), true);
-#endif
 
             try
             {
@@ -615,23 +627,51 @@ namespace GUI.Controls
             Keys.D => TrackedKeys.Right,
             Keys.Q => TrackedKeys.Up,
             Keys.Z => TrackedKeys.Down,
+            Keys.ControlKey => TrackedKeys.Control,
             Keys.LShiftKey => TrackedKeys.Shift,
             Keys.LMenu => TrackedKeys.Alt,
             _ => TrackedKeys.None,
         };
 
-        private static void CheckOpenGL()
+        private static void ClipboardSetImage(SKBitmap bitmap)
         {
-            if (hasCheckedOpenGL)
+            var data = new DataObject();
+
+            using var bitmapWindows = bitmap.ToBitmap();
+            data.SetData(DataFormats.Bitmap, true, bitmapWindows);
+
+            using var pngStream = new MemoryStream();
+            using var pixels = bitmap.PeekPixels();
+            var png = pixels.Encode(pngStream, new SKPngEncoderOptions(SKPngEncoderFilterFlags.Sub, zLibLevel: 1));
+
+            bitmapWindows.Save(pngStream, System.Drawing.Imaging.ImageFormat.Png);
+            data.SetData("PNG", false, pngStream);
+
+            Clipboard.SetDataObject(data, copy: true);
+        }
+
+        public static void CheckOpenGL()
+        {
+            if (Settings.GpuRendererAndDriver != null)
             {
                 return;
             }
 
-            hasCheckedOpenGL = true;
+            var minor = GL.GetInteger(GetPName.MinorVersion);
+            var major = GL.GetInteger(GetPName.MajorVersion);
 
-            Log.Debug("OpenGL", $"GPU: {GL.GetString(StringName.Renderer)}, Driver: {GL.GetString(StringName.Version)}, OS: {Environment.OSVersion}");
+            var gpu = $"GPU: {GL.GetString(StringName.Renderer)}, Driver: {GL.GetString(StringName.Version)}";
+
+            Settings.GpuRendererAndDriver = gpu;
+
+            Log.Debug("OpenGL", $"{gpu}, OS: {Environment.OSVersion}");
 
             MaterialLoader.MaxTextureMaxAnisotropy = GL.GetFloat((GetPName)ExtTextureFilterAnisotropic.MaxTextureMaxAnisotropyExt);
+
+            if (major < OpenGlVersionMajor || minor < OpenGlVersionMinor)
+            {
+                throw new NotSupportedException($"Source 2 Viewer requires OpenGL {OpenGlVersionMajor}.{OpenGlVersionMinor}, but you have {major}.{minor}.");
+            }
         }
     }
 }

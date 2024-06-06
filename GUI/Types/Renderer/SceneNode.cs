@@ -1,10 +1,9 @@
 using System.Diagnostics;
-using System.Linq;
 using ValveResourceFormat.ResourceTypes;
 
 namespace GUI.Types.Renderer
 {
-    [DebuggerDisplay("{DebugName}")]
+    [DebuggerDisplay("{DebugName,nq}")]
     internal abstract class SceneNode
     {
         public Matrix4x4 Transform
@@ -18,7 +17,7 @@ namespace GUI.Types.Renderer
         }
 
         public string LayerName { get; set; }
-        public bool LayerEnabled { get; set; } = true;
+        public virtual bool LayerEnabled { get; set; } = true;
         public AABB BoundingBox { get; private set; }
         public AABB LocalBoundingBox
         {
@@ -33,7 +32,7 @@ namespace GUI.Types.Renderer
         public string Name { get; init; }
         public uint Id { get; set; }
 
-        public string DebugName => $"{Name} ({Id}) at {BoundingBox.Center.X:F2} {BoundingBox.Center.Y:F2} {BoundingBox.Center.Z:F2}";
+        public string DebugName => $"{GetType().Name.Replace("SceneNode", "", StringComparison.Ordinal)}{(string.IsNullOrEmpty(Name) ? "" : " ")}{Name} ({Id}) at {BoundingBox.Center.X:F2} {BoundingBox.Center.Y:F2} {BoundingBox.Center.Z:F2}";
 
         public Scene Scene { get; }
 
@@ -58,7 +57,7 @@ namespace GUI.Types.Renderer
         public abstract void Update(Scene.UpdateContext context);
         public abstract void Render(Scene.RenderContext context);
 
-        public virtual IEnumerable<string> GetSupportedRenderModes() => Enumerable.Empty<string>();
+        public virtual IEnumerable<string> GetSupportedRenderModes() => [];
         public virtual void SetRenderMode(string mode)
         {
         }

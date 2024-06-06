@@ -17,6 +17,7 @@
 #elif (SCENE_CUBEMAP_TYPE == 2)
     uniform samplerCubeArray g_tEnvironmentMap;
     uniform int g_iEnvMapArrayIndices[MAX_ENVMAPS];
+    uniform int g_iEnvMapArrayLength;
 #endif
 
 vec3 CubemapParallaxCorrection(vec3 envMapLocalPos, vec3 localReflectionVector, vec3 envMapBoxMin, vec3 envMapBoxMax)
@@ -39,9 +40,10 @@ vec3 CubemapParallaxCorrection(vec3 envMapLocalPos, vec3 localReflectionVector, 
 
 float GetEnvMapLOD(float roughness, vec3 R, float clothMask)
 {
-    #if (renderMode_Cubemaps == 1)
+    if (g_iRenderMode == renderMode_Cubemaps)
+    {
         return sin(g_flTime * 3);
-    #endif
+    }
 
     const float EnvMapMipCount = g_vEnvMapSizeConstants.x;
 
@@ -60,7 +62,12 @@ const vec2 CubemapNormalizationParams = vec2(34.44445, -2.44445); // Normalizati
 
 float GetEnvMapNormalization(float rough, vec3 N, vec3 irradiance)
 {
-    #if (bUseCubemapNormalization == 1 && renderMode_Cubemaps == 0)
+    if (g_iRenderMode == renderMode_Cubemaps)
+    {
+        return 1.0;
+    }
+
+    #if (bUseCubemapNormalization == 1)
         // Cancel out lighting
         // SH is currently fully 1.0, for temporary reasons.
         // We don't know how to get the greyscale SH that they use here, because the radiance coefficients in the cubemap texture are rgb.
@@ -99,7 +106,7 @@ vec3 EnvBRDF(vec3 specColor, float rough, vec3 N, vec3 V)
 
 
 // In CS2, anisotropic cubemaps are default enabled with aniso gloss
-#if ((F_ANISOTROPIC_GLOSS == 1) && ((F_SPECULAR_CUBE_MAP_ANISOTROPIC_WARP == 1) || !defined(vr_complex_vfx)))
+#if (defined(VEC2_ROUGHNESS) && ((F_SPECULAR_CUBE_MAP_ANISOTROPIC_WARP == 1) || !defined(vr_complex_vfx)))
     vec3 CalculateAnisoCubemapWarpVector(MaterialProperties_t mat)
     {
         // is this like part of the material struct in the og code? it's calculated at the start
@@ -118,28 +125,32 @@ vec3 GetCorrectedSampleCoords(vec3 R, mat4x3 envMapWorldToLocal, vec3 envMapLoca
     vec3 localReflectionVector = envMapWorldToLocal * vec4(R, 0.0);
     return isBoxProjection
         ? CubemapParallaxCorrection(envMapLocalPos, localReflectionVector, envMapBoxMin, envMapBoxMax)
-        : R;
+        : localReflectionVector;
 }
 
 
 vec3 GetEnvironment(MaterialProperties_t mat)
 {
-    #if (renderMode_Cubemaps == 1)
-        vec3 reflectionNormal = mat.GeometricNormal;
-    #elif ((F_ANISOTROPIC_GLOSS == 1) && ((F_SPECULAR_CUBE_MAP_ANISOTROPIC_WARP == 1) || !defined(vr_complex_vfx)))
+    #if (defined(VEC2_ROUGHNESS) && ((F_SPECULAR_CUBE_MAP_ANISOTROPIC_WARP == 1) || !defined(vr_complex_vfx)))
         vec3 reflectionNormal = CalculateAnisoCubemapWarpVector(mat);
     #else
         vec3 reflectionNormal = mat.AmbientNormal;
     #endif
 
-    // Reflection Vector
-    vec3 R = normalize(reflect(-mat.ViewDir, reflectionNormal));
-
-    #if (F_ANISOTROPIC_GLOSS == 1)
+    #if defined(VEC2_ROUGHNESS)
         float roughness = sqrt(max(mat.Roughness.x, mat.Roughness.y));
     #else
         float roughness = mat.Roughness;
     #endif
+
+    if (g_iRenderMode == renderMode_Cubemaps)
+    {
+        reflectionNormal = mat.GeometricNormal;
+        roughness = 0.0;
+    }
+
+    // Reflection Vector
+    vec3 R = normalize(reflect(-mat.ViewDir, reflectionNormal));
 
     #if (F_CLOTH_SHADING == 1)
         // changed, original was just true
@@ -148,16 +159,12 @@ vec3 GetEnvironment(MaterialProperties_t mat)
         const bool bIsClothShading = false;
     #endif
 
-    #if renderMode_Cubemaps == 1
-        roughness = 0.0;
-    #endif
-
     vec3 envMap = vec3(0.0);
 
     const float lod = GetEnvMapLOD(roughness, R, 0.0);
 
     #if (SCENE_CUBEMAP_TYPE == 0)
-        envMap = max(g_vClearColor.rgb, vec3(0.3, 0.1, 0.1));
+        envMap = vec3(0.3, 0.1, 0.1);
     #elif (SCENE_CUBEMAP_TYPE == 1)
         int envMapArrayIndex = g_iEnvMapArrayIndices;
         vec4 proxySphere = g_vEnvMapProxySphere[envMapArrayIndex];
@@ -175,19 +182,22 @@ vec3 GetEnvironment(MaterialProperties_t mat)
 
     float totalWeight = 0.01;
 
-    for (int i = 0; i < g_vEnvMapSizeConstants.y; i++) {
+    for (int i = 0; i < g_iEnvMapArrayLength; i++)
+    {
         int envMapArrayIndex = g_iEnvMapArrayIndices[i];
         vec4 proxySphere = g_vEnvMapProxySphere[envMapArrayIndex];
         bool isBoxProjection = proxySphere.w == 1.0f;
-        vec3 envMapBoxMin = g_vEnvMapBoxMins[envMapArrayIndex].xyz - vec3(0.001);
-        vec3 envMapBoxMax = g_vEnvMapBoxMaxs[envMapArrayIndex].xyz + vec3(0.001);
+        vec3 envMapBoxMin = g_vEnvMapBoxMins[envMapArrayIndex].xyz - vec3(0.01);
+        vec3 envMapBoxMax = g_vEnvMapBoxMaxs[envMapArrayIndex].xyz + vec3(0.01);
         mat4x3 envMapWorldToLocal = mat4x3(g_matEnvMapWorldToLocal[envMapArrayIndex]);
         vec3 envMapLocalPos = envMapWorldToLocal * vec4(vFragPosition, 1.0);
         float weight = 1.0f;
 
+        const bool bUseCubemapBlending = LightmapGameVersionNumber >= 2;
         vec3 dists = g_vEnvMapEdgeFadeDists[envMapArrayIndex].xyz;
 
-        if (isBoxProjection) {
+        if (bUseCubemapBlending && isBoxProjection)
+        {
             vec3 envInvEdgeWidth = 1.0 / dists;
             vec3 envmapClampedFadeMax = clamp((envMapBoxMax - envMapLocalPos) * envInvEdgeWidth, vec3(0.0), vec3(1.0));
             vec3 envmapClampedFadeMin = clamp((envMapLocalPos - envMapBoxMin) * envInvEdgeWidth, vec3(0.0), vec3(1.0));
@@ -217,9 +227,10 @@ vec3 GetEnvironment(MaterialProperties_t mat)
 
     #endif // SCENE_CUBEMAP_TYPE == 2
 
-    #if (renderMode_Cubemaps == 1)
+    if (g_iRenderMode == renderMode_Cubemaps)
+    {
         return envMap;
-    #endif
+    }
 
     vec3 brdf = EnvBRDF(mat.SpecularColor, GetIsoRoughness(mat.Roughness), mat.AmbientNormal, mat.ViewDir);
 

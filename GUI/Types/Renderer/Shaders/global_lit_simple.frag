@@ -1,8 +1,14 @@
 #version 460
 
 // Render modes -- Switched on/off by code
-#include "common/utils.glsl"
-#include "common/rendermodes.glsl"
+#define renderMode_FullBright 0
+#define renderMode_Color 0
+#define renderMode_Roughness 0
+#define renderMode_Normals 0
+#define renderMode_Tangents 0
+#define renderMode_BumpMap 0
+#define renderMode_BumpNormals 0
+#define renderMode_Illumination 0
 #define renderMode_Tint 0
 
 //Parameter defines - These are default values and can be overwritten based on material/model parameters
@@ -18,8 +24,6 @@
 #define F_TRANSLUCENT 0
 #define F_ALLOW_LIGHTING_ON_TRANSLUCENT 0
 #define F_SCROLL_UV 0
-
-#define HemiOctIsoRoughness_RG_B 0
 //End of parameter defines
 
 in vec3 vFragPosition;
@@ -60,6 +64,7 @@ out vec4 outputColor;
     uniform vec4 g_vScrollUvDirection;
 #endif
 
+#include "common/utils.glsl"
 #include "common/ViewConstants.glsl"
 
 uniform vec4 g_vColorTint = vec4(1.0);
@@ -68,21 +73,8 @@ uniform float g_flOpacityScale = 1.0;
 uniform float g_flAlphaTestReference = 0.5;
 
 //Calculate the normal of this fragment in world space
-vec3 calculateWorldNormal(vec4 bumpNormal)
+vec3 calculateWorldNormal(vec3 vNormalTs)
 {
-    //Reconstruct the tangent vector from the map
-#if HemiOctIsoRoughness_RG_B == 1
-    vec2 temp = vec2(bumpNormal.x + bumpNormal.y -1.003922, bumpNormal.x - bumpNormal.y);
-    vec3 tangentNormal = oct_to_float32x3(temp);
-#else
-    //vec2 temp = vec2(bumpNormal.w, bumpNormal.y) * 2 - 1;
-    //vec3 tangentNormal = vec3(temp, sqrt(1 - temp.x * temp.x - temp.y * temp.y));
-    vec2 temp = vec2(bumpNormal.w + bumpNormal.y -1.003922, bumpNormal.w - bumpNormal.y);
-    vec3 tangentNormal = oct_to_float32x3(temp);
-#endif
-
-    tangentNormal.y *= -1.0;
-
     vec3 normal = vNormalOut;
     vec3 tangent = vTangentOut.xyz;
     vec3 bitangent = vBitangentOut;
@@ -91,7 +83,7 @@ vec3 calculateWorldNormal(vec4 bumpNormal)
     mat3 tangentSpace = mat3(tangent, bitangent, normal);
 
     //Calculate the tangent normal in world space and return it
-    return normalize(tangentSpace * tangentNormal);
+    return normalize(tangentSpace * vNormalTs);
 }
 
 void main()
@@ -117,8 +109,9 @@ void main()
     #endif
 
     #if (F_NORMAL_MAP == 1)
-        vec4 normal = texture(g_tNormal, coordsAll);
-        vec3 worldNormal = calculateWorldNormal(normal);
+        vec4 vNormalTexel = texture(g_tNormal, coordsAll);
+        vec3 vNormalTs = DecodeDxt5Normal(vNormalTexel);
+        vec3 worldNormal = calculateWorldNormal(vNormalTs);
     #else
         vec3 worldNormal = vNormalOut;
     #endif
@@ -134,13 +127,18 @@ void main()
     vec3 lightDirection = normalize(g_vCameraPositionWs - vFragPosition);
     vec3 viewDirection = normalize(g_vCameraPositionWs - vFragPosition);
 
-#if renderMode_FullBright == 1 || F_FULLBRIGHT == 1 || (F_TRANSLUCENT == 1 && F_ALLOW_LIGHTING_ON_TRANSLUCENT == 0)
+#if F_FULLBRIGHT == 1 || (F_TRANSLUCENT == 1 && F_ALLOW_LIGHTING_ON_TRANSLUCENT == 0)
     float illumination = 1.0;
 #else
     //Calculate lambert lighting
     float illumination = max(0.0, dot(worldNormal, lightDirection));
     illumination = illumination * 0.7 + 0.4; //add ambient
 #endif
+
+    if (g_iRenderMode == renderMode_FullBright)
+    {
+        illumination = 1.0;
+    }
 
     //Apply tint
 #if (F_TINT_MASK == 1 || F_TINT_MASK == 2)
@@ -170,31 +168,42 @@ void main()
         outputColor.rgb += specularTexel.y;
     #endif
 
-#if renderMode_Color == 1
-    outputColor = vec4(color.rgb, 1.0);
+    if (g_iRenderMode == renderMode_Color)
+    {
+        outputColor = vec4(color.rgb, 1.0);
+    }
+#if (F_SPECULAR == 1)
+    else if (g_iRenderMode == renderMode_Roughness)
+    {
+        outputColor.rgb = pow2(1 - specularTexel.xxx);
+    }
 #endif
-
-#if renderMode_BumpMap == 1 && F_NORMAL_MAP == 1
-    outputColor = normal;
+    else if (g_iRenderMode == renderMode_Tangents)
+    {
+        outputColor = vec4(PackToColor(vTangentOut.xyz), 1.0);
+    }
+    else if (g_iRenderMode == renderMode_Normals)
+    {
+        outputColor = vec4(PackToColor(vNormalOut), 1.0);
+    }
+    else if (g_iRenderMode == renderMode_BumpNormals)
+    {
+        outputColor = vec4(PackToColor(worldNormal), 1.0);
+    }
+    else if (g_iRenderMode == renderMode_Illumination)
+    {
+        outputColor = vec4(vec3(illumination), 1.0);
+    }
+#if F_NORMAL_MAP == 1
+    else if (g_iRenderMode == renderMode_BumpMap)
+    {
+        outputColor.rgb = PackToColor(vNormalTs);
+    }
 #endif
-
-#if renderMode_Tangents == 1
-    outputColor = vec4(PackToColor(vTangentOut.xyz), 1.0);
-#endif
-
-#if renderMode_Normals == 1
-    outputColor = vec4(PackToColor(vNormalOut), 1.0);
-#endif
-
-#if renderMode_BumpNormals == 1
-    outputColor = vec4(PackToColor(worldNormal), 1.0);
-#endif
-
-#if renderMode_Illumination == 1
-    outputColor = vec4(vec3(illumination), 1.0);
-#endif
-
-#if renderMode_Tint == 1 && F_PAINT_VERTEX_COLORS == 1
-    outputColor = vVertexColorOut;
+#if F_PAINT_VERTEX_COLORS == 1
+    else if (g_iRenderMode == renderMode_Tint)
+    {
+        outputColor = vVertexColorOut;
+    }
 #endif
 }

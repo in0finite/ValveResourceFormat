@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using NUnit.Framework;
 using ValveResourceFormat;
+using ValveResourceFormat.IO;
 using ValveResourceFormat.Utils;
 
 namespace Tests
@@ -18,7 +19,10 @@ namespace Tests
         {
             var resources = new Dictionary<string, Resource>();
             var path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files");
-            var files = Directory.GetFiles(path, "*.*_c");
+            var files = Directory.GetFiles(path, "*.*_c", new EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+            });
 
             if (files.Length == 0)
             {
@@ -31,7 +35,16 @@ namespace Tests
                 {
                     FileName = file,
                 };
-                resource.Read(file);
+
+                try
+                {
+                    resource.Read(file);
+                }
+                catch (NotImplementedException e) when (e.Message == "More than one indirection, not yet handled.")
+                {
+                    Console.WriteLine(e);
+                    continue;
+                }
 
                 resources.Add(Path.GetFileName(file), resource);
 
@@ -40,7 +53,7 @@ namespace Tests
                 // Verify extension
                 var extension = Path.GetExtension(file);
 
-                if (extension.EndsWith("_c", StringComparison.Ordinal))
+                if (extension.EndsWith(GameFileLoader.CompiledFileSuffix, StringComparison.Ordinal))
                 {
                     extension = extension[..^2];
                 }

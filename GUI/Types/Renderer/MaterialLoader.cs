@@ -88,8 +88,7 @@ namespace GUI.Types.Renderer
             var vrfMaterial = (VrfMaterial)resource.DataBlock;
             var mat = new RenderMaterial(
                 vrfMaterial,
-                vrfMaterial.GetInputSignature(),
-                VrfGuiContext.ShaderLoader,
+                VrfGuiContext,
                 shaderArguments
             );
 
@@ -324,7 +323,7 @@ namespace GUI.Types.Renderer
 
             VTexFormat.RGBA8888        => new(SizedInternalFormat.Rgba8,      PixelFormat.Rgba,   PixelType.UnsignedByte,     SizedInternalFormat.Srgb8Alpha8),
             VTexFormat.BGRA8888        => new(SizedInternalFormat.Rgba8,      PixelFormat.Bgra,   PixelType.UnsignedByte,     SizedInternalFormat.Srgb8Alpha8),
-            //VTexFormat.I8              => new(SizedInternalFormat.Intensity8, PixelFormat.Red,  PixelType.UnsignedByte),
+            VTexFormat.I8              => new(SizedInternalFormat.R8,         PixelFormat.Red,    PixelType.UnsignedByte),
 
             //VTexFormat.IA88
             //VTexFormat.R11_EAC
@@ -337,7 +336,9 @@ namespace GUI.Types.Renderer
 
         static readonly string[] NonMaterialUniforms =
         [
+            "g_iRenderMode",
             "g_flTime",
+            "g_flSunShadowBias",
             "g_vCameraPositionWs",
             "g_vLightmapUvScale",
             "g_vEnvMapSizeConstants",

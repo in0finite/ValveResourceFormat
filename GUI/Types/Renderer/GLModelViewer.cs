@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using GUI.Controls;
 using GUI.Utils;
+using ValveResourceFormat.IO;
 using ValveResourceFormat.ResourceTypes;
 
 namespace GUI.Types.Renderer
@@ -15,12 +16,14 @@ namespace GUI.Types.Renderer
         public ComboBox animationComboBox { get; private set; }
         private CheckBox animationPlayPause;
         private CheckBox showSkeletonCheckbox;
+        private ComboBox hitboxComboBox;
         private GLViewerTrackBarControl animationTrackBar;
         private GLViewerTrackBarControl slowmodeTrackBar;
         public CheckedListBox meshGroupListBox { get; private set; }
         public ComboBox materialGroupListBox { get; private set; }
         private ModelSceneNode modelSceneNode;
         private SkeletonSceneNode skeletonSceneNode;
+        private HitboxSetSceneNode hitboxSetSceneNode;
         private CheckedListBox physicsGroupsComboBox;
 
         public GLModelViewer(VrfGuiContext guiContext) : base(guiContext)
@@ -40,6 +43,8 @@ namespace GUI.Types.Renderer
 
         protected override void Dispose(bool disposing)
         {
+            base.Dispose(disposing);
+
             if (disposing)
             {
                 animationComboBox?.Dispose();
@@ -50,9 +55,8 @@ namespace GUI.Types.Renderer
                 materialGroupListBox?.Dispose();
                 physicsGroupsComboBox?.Dispose();
                 showSkeletonCheckbox?.Dispose();
+                hitboxComboBox?.Dispose();
             }
-
-            base.Dispose(disposing);
         }
 
         private void AddAnimationControls()
@@ -118,7 +122,7 @@ namespace GUI.Types.Renderer
                     SetAvailableAnimations(animations);
                 }
 
-                skeletonSceneNode = new SkeletonSceneNode(Scene, modelSceneNode.AnimationController, model.Skeleton);
+                skeletonSceneNode = new SkeletonSceneNode(Scene, modelSceneNode.AnimationController, model.Skeleton, textRenderer);
                 Scene.Add(skeletonSceneNode, true);
 
                 if (model.Skeleton.Bones.Length > 0)
@@ -130,6 +134,27 @@ namespace GUI.Types.Renderer
                             skeletonSceneNode.Enabled = isChecked;
                         }
                     });
+                }
+
+                if (model.HitboxSets != null && model.HitboxSets.Count > 0)
+                {
+                    var hitboxSets = model.HitboxSets;
+                    hitboxSetSceneNode = new HitboxSetSceneNode(Scene, modelSceneNode.AnimationController, hitboxSets);
+                    Scene.Add(hitboxSetSceneNode, true);
+
+                    hitboxComboBox = AddSelection("Hitbox Set", (hitboxSet, i) =>
+                    {
+                        if (i == 0)
+                        {
+                            hitboxSetSceneNode.SetHitboxSet(null);
+                        }
+                        else
+                        {
+                            hitboxSetSceneNode.SetHitboxSet(hitboxSet);
+                        }
+                    });
+                    hitboxComboBox.Items.Add("");
+                    hitboxComboBox.Items.AddRange([.. hitboxSets.Keys]);
                 }
 
                 phys = model.GetEmbeddedPhys();
@@ -264,6 +289,9 @@ namespace GUI.Types.Renderer
             {
                 physNode.Enabled = physicsGroups.Contains(physNode.PhysGroupName);
             }
+
+            Scene.UpdateOctrees();
+            SkyboxScene?.UpdateOctrees();
         }
 
         protected override void OnPicked(object sender, PickingTexture.PickingResponse pickingResponse)
@@ -277,15 +305,15 @@ namespace GUI.Types.Renderer
             if (pickingResponse.PixelInfo.ObjectId == 0)
             {
                 selectedNodeRenderer.SelectNode(null);
+                selectedNodeRenderer.UpdateEveryFrame = false;
                 return;
             }
 
             if (pickingResponse.Intent == PickingTexture.PickingIntent.Select)
             {
-                Log.Info(nameof(GLModelViewer), $"Selected mesh {pickingResponse.PixelInfo.MeshId}, ({pickingResponse.PixelInfo.ObjectId}.");
-
                 var sceneNode = Scene.Find(pickingResponse.PixelInfo.ObjectId);
                 selectedNodeRenderer.SelectNode(sceneNode);
+                selectedNodeRenderer.UpdateEveryFrame = true;
 
                 return;
             }
@@ -295,7 +323,7 @@ namespace GUI.Types.Renderer
                 var refMesh = modelSceneNode.GetLod1RefMeshes().FirstOrDefault(x => x.MeshIndex == pickingResponse.PixelInfo.MeshId);
                 if (refMesh.MeshName != null)
                 {
-                    var foundFile = GuiContext.FileLoader.FindFileWithContext(refMesh.MeshName + "_c");
+                    var foundFile = GuiContext.FileLoader.FindFileWithContext(refMesh.MeshName + GameFileLoader.CompiledFileSuffix);
                     if (foundFile.Context != null)
                     {
                         var task = Program.MainForm.OpenFile(foundFile.Context, foundFile.PackageEntry);

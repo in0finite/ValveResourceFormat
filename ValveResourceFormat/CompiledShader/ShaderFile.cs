@@ -16,7 +16,7 @@ namespace ValveResourceFormat.CompiledShader
         public const int ZSTD_COMPRESSION = 1;
         public const int LZMA_COMPRESSION = 2;
         public ShaderDataReader DataReader { get; set; }
-        private FileStream FileStream;
+        private Stream BaseStream;
 
         public string FilenamePath { get; private set; }
         public string ShaderName { get; private set; }
@@ -61,10 +61,10 @@ namespace ValveResourceFormat.CompiledShader
         {
             if (disposing)
             {
-                if (FileStream != null)
+                if (BaseStream != null)
                 {
-                    FileStream.Dispose();
-                    FileStream = null;
+                    BaseStream.Dispose();
+                    BaseStream = null;
                 }
 
                 if (DataReader != null)
@@ -84,8 +84,8 @@ namespace ValveResourceFormat.CompiledShader
         /// <param name="filenamepath">The file to open and read.</param>
         public void Read(string filenamepath)
         {
-            FileStream = new FileStream(filenamepath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            Read(filenamepath, FileStream);
+            var stream = new FileStream(filenamepath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            Read(filenamepath, stream);
         }
 
         /// <summary>
@@ -95,6 +95,7 @@ namespace ValveResourceFormat.CompiledShader
         /// <param name="input">The input <see cref="Stream"/> to read from.</param>
         public void Read(string filenamepath, Stream input)
         {
+            BaseStream = input;
             DataReader = new ShaderDataReader(input) { IsSbox = IsSbox };
             FilenamePath = filenamepath;
             ParseFile();
@@ -254,7 +255,7 @@ namespace ValveResourceFormat.CompiledShader
                 }
 
                 var zframeDataDesc = new ZFrameDataDescription(zFrame.Id, zFrame.Offset,
-                    compressionType, uncompressedLength, compressedLength, DataReader);
+                    compressionType, uncompressedLength, compressedLength);
                 ZframesLookup.Add(zFrame.Id, zframeDataDesc);
             }
         }
@@ -272,17 +273,17 @@ namespace ValveResourceFormat.CompiledShader
 
         public byte[] GetCompressedZFrameData(long zframeId)
         {
-            return ZframesLookup[zframeId].GetCompressedZFrameData();
+            return ZframesLookup[zframeId].GetCompressedZFrameData(DataReader);
         }
 
         public byte[] GetDecompressedZFrameByIndex(int zframeIndex)
         {
-            return ZframesLookup.ElementAt(zframeIndex).Value.GetDecompressedZFrame();
+            return ZframesLookup.ElementAt(zframeIndex).Value.GetDecompressedZFrame(DataReader);
         }
 
         public byte[] GetDecompressedZFrame(long zframeId)
         {
-            return ZframesLookup[zframeId].GetDecompressedZFrame();
+            return ZframesLookup[zframeId].GetDecompressedZFrame(DataReader);
         }
 
         public ZFrameFile GetZFrameFile(long zframeId, HandleOutputWrite outputWriter = null, bool omitParsing = false)
@@ -520,54 +521,52 @@ namespace ValveResourceFormat.CompiledShader
         public int CompressionType { get; }
         public int CompressedLength { get; }
         public int UncompressedLength { get; }
-        private ShaderDataReader DataReader { get; }
         public ZFrameDataDescription(long zframeId, int offsetToZFrameHeader, int compressionType,
-            int uncompressedLength, int compressedLength, ShaderDataReader datareader)
+            int uncompressedLength, int compressedLength)
         {
             ZframeId = zframeId;
             OffsetToZFrameHeader = offsetToZFrameHeader;
             CompressionType = compressionType;
             UncompressedLength = uncompressedLength;
             CompressedLength = compressedLength;
-            DataReader = datareader;
         }
 
-        public byte[] GetCompressedZFrameData()
+        public byte[] GetCompressedZFrameData(ShaderDataReader dataReader)
         {
-            DataReader.BaseStream.Position = OffsetToZFrameHeader;
+            dataReader.BaseStream.Position = OffsetToZFrameHeader;
             switch (CompressionType)
             {
                 case ShaderFile.UNCOMPRESSED:
-                    DataReader.BaseStream.Position += 4;
-                    return DataReader.ReadBytes(UncompressedLength);
+                    dataReader.BaseStream.Position += 4;
+                    return dataReader.ReadBytes(UncompressedLength);
 
                 case ShaderFile.ZSTD_COMPRESSION:
-                    DataReader.BaseStream.Position += 12;
-                    return DataReader.ReadBytes(CompressedLength);
+                    dataReader.BaseStream.Position += 12;
+                    return dataReader.ReadBytes(CompressedLength);
 
                 case ShaderFile.LZMA_COMPRESSION:
-                    DataReader.BaseStream.Position += 21;
-                    return DataReader.ReadBytes(CompressedLength);
+                    dataReader.BaseStream.Position += 21;
+                    return dataReader.ReadBytes(CompressedLength);
 
                 default:
                     throw new ShaderParserException($"Unknown compression type or compression type not determined {CompressionType}");
             }
         }
 
-        public byte[] GetDecompressedZFrame()
+        public byte[] GetDecompressedZFrame(ShaderDataReader dataReader)
         {
-            DataReader.BaseStream.Position = OffsetToZFrameHeader;
+            dataReader.BaseStream.Position = OffsetToZFrameHeader;
             switch (CompressionType)
             {
                 case ShaderFile.UNCOMPRESSED:
-                    DataReader.BaseStream.Position += 4;
-                    return DataReader.ReadBytes(UncompressedLength);
+                    dataReader.BaseStream.Position += 4;
+                    return dataReader.ReadBytes(UncompressedLength);
 
                 case ShaderFile.ZSTD_COMPRESSION:
                     using (var zstdDecoder = new Decompressor())
                     {
-                        DataReader.BaseStream.Position += 12;
-                        var compressedZframe = DataReader.ReadBytes(CompressedLength);
+                        dataReader.BaseStream.Position += 12;
+                        var compressedZframe = dataReader.ReadBytes(CompressedLength);
                         zstdDecoder.LoadDictionary(ZstdDictionary.GetDictionary());
                         var zframeUncompressed = zstdDecoder.Unwrap(compressedZframe);
                         if (zframeUncompressed.Length != UncompressedLength)
@@ -579,9 +578,9 @@ namespace ValveResourceFormat.CompiledShader
 
                 case ShaderFile.LZMA_COMPRESSION:
                     var lzmaDecoder = new LzmaDecoder();
-                    DataReader.BaseStream.Position += 16;
-                    lzmaDecoder.SetDecoderProperties(DataReader.ReadBytes(5));
-                    var compressedBuffer = DataReader.ReadBytes(CompressedLength);
+                    dataReader.BaseStream.Position += 16;
+                    lzmaDecoder.SetDecoderProperties(dataReader.ReadBytes(5));
+                    var compressedBuffer = dataReader.ReadBytes(CompressedLength);
                     using (var inputStream = new MemoryStream(compressedBuffer))
                     using (var outStream = new MemoryStream((int)UncompressedLength))
                     {

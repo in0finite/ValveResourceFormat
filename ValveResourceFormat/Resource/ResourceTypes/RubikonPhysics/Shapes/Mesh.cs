@@ -2,6 +2,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using ValveResourceFormat.Serialization;
+using ValveResourceFormat.Serialization.KeyValues;
 
 namespace ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes
 {
@@ -19,12 +20,17 @@ namespace ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes
         public readonly struct Node
         {
             public readonly Vector3 Min;
+            private readonly uint PackedTypeChildOffset;
 
             /// <summary>
-            /// The 2nd child offset and the node type/split axis.
-            /// Type is stored in the first 2 MSBs.
+            /// The node type/split axis.
             /// </summary>
-            public readonly uint Children;
+            public NodeType Type => (NodeType)(PackedTypeChildOffset >> 30);
+
+            /// <summary>
+            /// The 2nd child offset, otherwise when <see cref="Type" /> is <see cref="NodeType.Leaf" />, this is the triangle count.
+            /// </summary>
+            public uint ChildOffset => PackedTypeChildOffset & 0x3FFFFFFF;
 
             public readonly Vector3 Max;
 
@@ -33,11 +39,11 @@ namespace ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes
             /// </summary>
             public readonly uint TriangleOffset;
 
-            public Node(IKeyValueCollection data)
+            public Node(KVObject data)
             {
                 Min = data.GetSubCollection("m_vMin").ToVector3();
                 Max = data.GetSubCollection("m_vMax").ToVector3();
-                Children = data.GetUInt32Property("m_nChildren");
+                PackedTypeChildOffset = data.GetUInt32Property("m_nChildren");
                 TriangleOffset = data.GetUInt32Property("m_nTriangleOffset");
             }
         }
@@ -52,7 +58,7 @@ namespace ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes
             /// <summary>The Z component of the triangle.</summary>
             public readonly int Z;
 
-            public Triangle(IKeyValueCollection data)
+            public Triangle(KVObject data)
             {
                 var indices = data.GetArray<object>("m_nIndex").Select(Convert.ToInt32).ToArray();
 
@@ -80,9 +86,9 @@ namespace ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes
         /// Fraction 0..1 of coverage along YZ,ZX,XY sides of AABB
         /// </summary>
         public Vector3 OrthographicAreas { get; }
-        public IKeyValueCollection Data { get; }
+        public KVObject Data { get; }
 
-        public Mesh(IKeyValueCollection data)
+        public Mesh(KVObject data)
         {
             Data = data;
             Min = data.GetSubCollection("m_vMin").ToVector3();

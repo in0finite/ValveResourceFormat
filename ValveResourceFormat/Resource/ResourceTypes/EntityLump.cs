@@ -11,38 +11,55 @@ namespace ValveResourceFormat.ResourceTypes
 {
     public class EntityLump : KeyValuesOrNTRO
     {
+        public static class CommonHashes
+        {
+            public static readonly uint Classname = StringToken.Get("classname");
+            public static readonly uint Origin = StringToken.Get("origin");
+            public static readonly uint Angles = StringToken.Get("angles");
+            public static readonly uint Scales = StringToken.Get("scales");
+            public static readonly uint HammerUniqueId = StringToken.Get("hammeruniqueid");
+            public static readonly uint Model = StringToken.Get("model");
+        }
+
         public class Entity
         {
             public Dictionary<uint, EntityProperty> Properties { get; } = [];
-            public List<IKeyValueCollection> Connections { get; internal set; }
+            public List<KVObject> Connections { get; internal set; }
 
-            public T GetProperty<T>(string name)
-                => GetProperty<T>(StringToken.Get(name));
+            public T GetProperty<T>(string name, T defaultValue = default)
+                => GetProperty<T>(StringToken.Get(name), defaultValue);
 
-            public T GetPropertyUnchecked<T>(string name)
-                => GetPropertyUnchecked<T>(StringToken.Get(name));
+            public T GetPropertyUnchecked<T>(string name, T defaultValue = default)
+                => GetPropertyUnchecked<T>(StringToken.Get(name), defaultValue);
 
             public EntityProperty GetProperty(string name)
                 => GetProperty(StringToken.Get(name));
 
-            public T GetProperty<T>(uint hash)
+            public T GetProperty<T>(uint hash, T defaultValue = default)
             {
                 if (Properties.TryGetValue(hash, out var property))
                 {
                     return (T)property.Data;
                 }
 
-                return default;
+                return defaultValue;
             }
 
-            public T GetPropertyUnchecked<T>(uint hash)
+            public T GetPropertyUnchecked<T>(uint hash, T defaultValue = default)
             {
                 if (Properties.TryGetValue(hash, out var property))
                 {
-                    return (T)Convert.ChangeType(property.Data, typeof(T), CultureInfo.InvariantCulture);
+                    try
+                    {
+                        return (T)Convert.ChangeType(property.Data, typeof(T), CultureInfo.InvariantCulture);
+                    }
+                    catch (FormatException)
+                    {
+                        // String format
+                    }
                 }
 
-                return default;
+                return defaultValue;
             }
 
             public EntityProperty GetProperty(uint hash)
@@ -76,7 +93,7 @@ namespace ValveResourceFormat.ResourceTypes
                 .Select(ParseEntityProperties)
                 .ToList();
 
-        private static Entity ParseEntityProperties(IKeyValueCollection entityKv)
+        private static Entity ParseEntityProperties(KVObject entityKv)
         {
             var connections = entityKv.GetArray("m_connections");
             Entity entity;
@@ -98,7 +115,7 @@ namespace ValveResourceFormat.ResourceTypes
             return entity;
         }
 
-        private static Entity ParseEntityPropertiesKV3(IKeyValueCollection entityKv)
+        private static Entity ParseEntityPropertiesKV3(KVObject entityKv)
         {
             var entityVersion = entityKv.GetInt32Property("version");
 
@@ -133,14 +150,14 @@ namespace ValveResourceFormat.ResourceTypes
 
                 if (value.Value.Type == KVType.ARRAY)
                 {
-                    var arrayKv = (IKeyValueCollection)value.Value.Value;
+                    var arrayKv = (KVObject)value.Value.Value;
 
-                    type = arrayKv.Count() switch
+                    type = arrayKv.Count switch
                     {
                         2 => EntityFieldType.Vector2d, // Did binary entity lumps not store vec2?
                         3 => EntityFieldType.Vector,
                         4 => EntityFieldType.Vector4D,
-                        _ => throw new NotImplementedException($"Unsupported array length of {arrayKv.Count()}"),
+                        _ => throw new NotImplementedException($"Unsupported array length of {arrayKv.Count}"),
                     };
                     data = type switch
                     {
@@ -325,6 +342,132 @@ namespace ValveResourceFormat.ResourceTypes
                 {
                     builder.AppendLine(CultureInfo.InvariantCulture, $"key={unknownKey.Key} hits={unknownKey.Value}");
                 }
+            }
+
+            return builder.ToString();
+        }
+
+        public string ToForgeGameData()
+        {
+            var knownKeys = StringToken.InvertedTable;
+            var uniqueEntityProperties = new Dictionary<string, HashSet<(string Name, EntityFieldType Type)>>();
+            var uniqueEntityConnections = new Dictionary<string, HashSet<string>>();
+            var brushEntities = new HashSet<string>();
+
+            foreach (var entity in GetEntities())
+            {
+                var classname = entity.GetProperty<string>("classname").ToLowerInvariant();
+
+                if (!uniqueEntityProperties.TryGetValue(classname, out var entityProperties))
+                {
+                    entityProperties = [];
+                    uniqueEntityProperties.Add(classname, entityProperties);
+                }
+
+                foreach (var property in entity.Properties)
+                {
+                    string key;
+
+                    if (knownKeys.TryGetValue(property.Key, out var knownKey))
+                    {
+                        key = knownKey;
+                    }
+                    else if (property.Value.Name != null)
+                    {
+                        key = property.Value.Name;
+                    }
+                    else
+                    {
+                        continue;
+                    }
+
+                    if (key is "hammeruniqueid" or "classname" or "angles" or "scales" or "origin")
+                    {
+                        continue;
+                    }
+
+                    if (property.Value.Type == EntityFieldType.CString && key == "model")
+                    {
+                        var model = (string)property.Value.Data;
+
+                        if (model.Contains("/entities/", StringComparison.Ordinal) || model.Contains("\\entities\\", StringComparison.Ordinal))
+                        {
+                            brushEntities.Add(classname);
+                        }
+                    }
+
+                    entityProperties.Add((key, property.Value.Type));
+                }
+
+                if (entity.Connections != null)
+                {
+                    if (!uniqueEntityConnections.TryGetValue(classname, out var entityConnections))
+                    {
+                        entityConnections = [];
+                        uniqueEntityConnections.Add(classname, entityConnections);
+                    }
+
+                    foreach (var connection in entity.Connections)
+                    {
+                        var outputName = connection.GetProperty<string>("m_outputName");
+
+                        entityConnections.Add(outputName);
+                    }
+                }
+            }
+
+            var builder = new StringBuilder();
+            builder.AppendLine(CultureInfo.InvariantCulture, $"// Generated with {StringToken.VRF_GENERATOR}");
+            builder.AppendLine();
+
+            foreach (var (classname, properties) in uniqueEntityProperties.OrderBy(x => x.Key))
+            {
+                if (brushEntities.Contains(classname))
+                {
+                    builder.Append("@SolidClass ");
+                }
+                else
+                {
+                    builder.Append("@PointClass ");
+                }
+
+                if (properties.RemoveWhere(x => x.Name == "targetname") > 0)
+                {
+                    builder.Append("base(Targetname) ");
+                }
+
+                builder.AppendLine(CultureInfo.InvariantCulture, $"{classname} : \"\"");
+                builder.AppendLine("[");
+
+                foreach (var property in properties.OrderBy(x => x.Name))
+                {
+                    var type = property.Type switch
+                    {
+                        EntityFieldType.Float64 => "float",
+                        EntityFieldType.Color32 => "color255",
+                        EntityFieldType.UInt => "integer",
+                        EntityFieldType.Integer64 => "integer",
+                        EntityFieldType.Vector or EntityFieldType.QAngle => "vector",
+                        EntityFieldType.CString => "string",
+                        _ => property.Type.ToString().ToLowerInvariant()
+                    };
+
+                    builder.AppendLine(CultureInfo.InvariantCulture, $"\t{property.Name}({type}) : \"\"");
+                }
+
+                if (uniqueEntityConnections.TryGetValue(classname, out var entityConnections) && entityConnections.Count > 0)
+                {
+                    builder.AppendLine();
+
+                    foreach (var connection in entityConnections.OrderBy(x => x))
+                    {
+                        // TODO: Inputs?
+                        builder.AppendLine(CultureInfo.InvariantCulture, $"\toutput {connection}(void) : \"\"");
+                    }
+                }
+
+                builder.AppendLine("]");
+                builder.AppendLine();
             }
 
             return builder.ToString();

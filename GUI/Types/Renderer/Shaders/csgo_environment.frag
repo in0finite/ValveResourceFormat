@@ -1,26 +1,21 @@
 #version 460
 
-// Includes
-#include "common/utils.glsl"
-#include "common/rendermodes.glsl"
-
 // Render modes -- Switched on/off by code
+#define renderMode_Cubemaps 0
+#define renderMode_Illumination 0
+#define renderMode_Tint 0
 #define renderMode_Diffuse 0
 #define renderMode_Specular 0
-#define renderMode_PBR 0
-#define renderMode_Cubemaps 0
-#define renderMode_Irradiance 0
-#define renderMode_Tint 0
-#define renderMode_Terrain_Blend 0
 #define renderMode_Height 0
 #define renderMode_VertexColor 0
+#define renderMode_Irradiance 0
+#define renderMode_TerrainBlend 0
 
+#include "common/utils.glsl"
 #include "common/features.glsl"
 #include "csgo_environment_features.glsl"
 
 #define S_SPECULAR 1 // Indirect
-
-#define HemiOctIsoRoughness_RG_B 0
 
 in vec3 vFragPosition;
 
@@ -47,10 +42,10 @@ uniform sampler2D g_tNormal1;
     uniform sampler2D g_tNormalDetail1;
 #endif
 
-#if (F_SECONDARY_AO == 1)
-    uniform sampler2D g_tSecondaryAO;
-    uniform vec4 g_vSecondaryAmbientOcclusionLevels = vec4(0, 0.5, 1, 0);
-#endif
+//#if (F_SECONDARY_AO == 1)
+//    uniform sampler2D g_tSecondaryAO;
+//    uniform vec4 g_vSecondaryAmbientOcclusionLevels = vec4(0, 0.5, 1, 0);
+//#endif
 
 uniform bool g_bMetalness1;
 uniform bool g_bModelTint1 = true;
@@ -67,8 +62,8 @@ uniform float g_fTintMaskContrast1 = 1.0;
 uniform int g_nVertexColorMode1 = 0;
 uniform vec4 g_vAmbientOcclusionLevels1 = vec4(0, 0.5, 1, 0);
 
-uniform float g_flHeightMapScale1 = 0;
-uniform float g_flHeightMapZeroPoint1 = 0;
+uniform float g_flHeightMapScale1 = 1.0;
+uniform float g_flHeightMapZeroPoint1 = 0.5;
 
 // Material 2
 #if defined(csgo_environment_blend_vfx)
@@ -111,7 +106,7 @@ uniform float g_flHeightMapZeroPoint1 = 0;
     uniform vec4 g_vAmbientOcclusionLevels2 = vec4(0, 0.5, 1, 0);
 
     uniform float g_flHeightMapScale2 = 1.0;
-    uniform float g_flHeightMapZeroPoint2 = 0.0;
+    uniform float g_flHeightMapZeroPoint2 = 0.5;
 
     vec2 GetBlendWeights(vec2 heightTex, vec2 heightScale, vec2 heightZero, vec4 vColorBlendValues)
     {
@@ -149,19 +144,16 @@ uniform float g_flHeightMapZeroPoint1 = 0;
     uniform float g_flAlphaTestReference = 0.5;
 #endif
 
-#define tinting_code_new
 uniform float g_flModelTintAmount = 1.0;
 
 #include "common/ViewConstants.glsl"
 #include "common/LightingConstants.glsl"
 
 #include "common/lighting_common.glsl"
+#include "common/fullbright.glsl"
 #include "common/texturing.glsl"
 #include "common/pbr.glsl"
-
-#if (S_SPECULAR == 1 || renderMode_Cubemaps == 1)
-#include "common/environment.glsl"
-#endif
+#include "common/environment.glsl" // (S_SPECULAR == 1 || renderMode_Cubemaps == 1)
 
 #include "common/fog.glsl"
 
@@ -215,7 +207,6 @@ MaterialProperties_t GetMaterial(vec3 vertexNormals)
         overlayFactor = max(vec3(0.0), _15235);
     #endif
 
-#if defined(tinting_code_new)
     vec3 tintColorNorm = normalize(max(vTintColor_ModelAmount.xyz, vec3(0.001)));
     float tintColorNormLuma = GetLuma(tintColorNorm);
 
@@ -234,14 +225,6 @@ MaterialProperties_t GetMaterial(vec3 vertexNormals)
 
     vec3 tintFactor1 = mix(vec3(1.0), (g_vTextureColorTint1.rgb), tintMask1);
     color.rgb = tintResult * tintFactor1;
-#else
-    vec3 vTint = mix(vec3(1.0), SrgbLinearToGamma(vTintColor_ModelAmount.rgb), g_flModelTintAmount);
-
-    vec3 layerTint1 = mix(vec3(1.0), vTint, vec3(g_bModelTint1)) * (g_vTextureColorTint1.rgb);
-    vec3 tintFactor1 = mix(vec3(1.0), layerTint1, tintMask1);
-    color.rgb = mix(color.rgb, AdjustBrightnessContrastSaturation(color.rgb, g_fTextureColorBrightness1, g_fTextureColorContrast1, g_fTextureColorSaturation1), bvec3(g_nColorCorrectionMode1 == 1));
-    color.rgb *= tintFactor1;
-#endif
 
     #if (F_SHARED_COLOR_OVERLAY == 1)
         // 0=Both, 1=Layer 1
@@ -267,7 +250,6 @@ MaterialProperties_t GetMaterial(vec3 vertexNormals)
     normal2.rg = (normal2.rg - 0.5) * g_fTextureNormalContrast2 + 0.5;
     normal2.b = saturate(((normal2.b - 0.5) * g_fTextureRoughnessContrast2 + 0.5) * g_fTextureRoughnessBrightness2);
 
-#if defined(tinting_code_new)
     vec3 adjust2 = AdjustBrightnessContrastSaturation(color2.rgb, g_fTextureColorBrightness2, g_fTextureColorContrast2, g_fTextureColorSaturation2);
     vec3 color2MaybeAdjusted = mix(color2.rgb, adjust2, bvec3(g_nColorCorrectionMode2 == 1));
 
@@ -281,12 +263,6 @@ MaterialProperties_t GetMaterial(vec3 vertexNormals)
 
     vec3 tintFactor2 = mix(vec3(1.0), (g_vTextureColorTint2.rgb), tintMask2);
     color2.rgb = tintResult2 * tintFactor2;
-#else
-    vec3 layerTint2 = mix(vec3(1.0), vTint, vec3(g_bModelTint2)) * (g_vTextureColorTint2.rgb);
-    vec3 tintFactor2 = mix(vec3(1.0), layerTint2, tintMask2);
-    color2.rgb = mix(color2.rgb, AdjustBrightnessContrastSaturation(color2.rgb, g_fTextureColorBrightness2, g_fTextureColorContrast2, g_fTextureColorSaturation2), bvec3(g_nColorCorrectionMode2 == 1));
-    color2.rgb *= tintFactor2;
-#endif
 
     #if (F_SHARED_COLOR_OVERLAY == 1)
         // 0=Both, 2=Layer 2
@@ -327,14 +303,13 @@ MaterialProperties_t GetMaterial(vec3 vertexNormals)
 
     //mat.AmbientOcclusion = LevelsAdjust(mat.AmbientOcclusion, aoLevels);
 
-    #if (F_SECONDARY_AO == 1)
-        float flSecondAO = texture(g_tSecondaryAO, vTexCoord.zw).r;
-        mat.AmbientOcclusion *= LevelsAdjust(flSecondAO, g_vSecondaryAmbientOcclusionLevels.xyz);
-    #endif
+    //#if (F_SECONDARY_AO == 1)
+    //    float flSecondAO = texture(g_tSecondaryAO, vTexCoord.zw).r;
+    //    mat.AmbientOcclusion *= LevelsAdjust(flSecondAO, g_vSecondaryAmbientOcclusionLevels.xyz);
+    //#endif
 
     // Normals and Roughness
-    mat.NormalMap = DecodeNormal(normal);
-
+    mat.NormalMap = DecodeHemiOctahedronNormal(normal.rg);
     mat.RoughnessTex = normal.b;
 
     // Detail texture
@@ -390,70 +365,50 @@ void main()
 
     outputColor.rgb = SrgbLinearToGamma(combinedLighting);
 
-#if renderMode_Height == 1
-    outputColor.rgb = mat.Height.xxx;
+    if (HandleMaterialRenderModes(mat, outputColor))
+    {
+        //
+    }
+    else if (g_iRenderMode == renderMode_Cubemaps)
+    {
+        // No bumpmaps, full reflectivity
+        vec3 viewmodeEnvMap = GetEnvironment(mat).rgb;
+        outputColor.rgb = SrgbLinearToGamma(viewmodeEnvMap);
+    }
+    else if (g_iRenderMode == renderMode_Illumination)
+    {
+        outputColor = vec4(SrgbLinearToGamma(lighting.DiffuseDirect + lighting.SpecularDirect), 1.0);
+    }
+    else if (g_iRenderMode == renderMode_Tint)
+    {
+        outputColor = vec4(vTintColor_ModelAmount.rgb, vVertexColor_Alpha.a);
+    }
+    else if (g_iRenderMode == renderMode_Diffuse)
+    {
+        outputColor.rgb = SrgbLinearToGamma(diffuseLighting * 0.5);
+    }
+    else if (g_iRenderMode == renderMode_Specular)
+    {
+        outputColor.rgb = SrgbLinearToGamma(specularLighting);
+    }
+    else if (g_iRenderMode == renderMode_Height)
+    {
+        outputColor.rgb = mat.Height.xxx;
+    }
+    else if (g_iRenderMode == renderMode_VertexColor)
+    {
+        outputColor.rgb = vVertexColor_Alpha.rgb;
+    }
+#if (F_GLASS == 0)
+    else if (g_iRenderMode == renderMode_Irradiance)
+    {
+        outputColor = vec4(SrgbLinearToGamma(lighting.DiffuseIndirect), 1.0);
+    }
 #endif
-
-#if renderMode_FullBright == 1
-    vec3 fullbrightLighting = CalculateFullbrightLighting(mat.Albedo, mat.Normal, mat.ViewDir);
-    outputColor = vec4(SrgbLinearToGamma(fullbrightLighting), mat.Opacity);
-#endif
-
-#if renderMode_Color == 1
-    outputColor = vec4(SrgbLinearToGamma(mat.Albedo), 1.0);
-#endif
-
-#if renderMode_BumpMap == 1
-    outputColor = vec4(PackToColor(mat.NormalMap), 1.0);
-#endif
-
-#if renderMode_Tangents == 1
-    outputColor = vec4(PackToColor(mat.Tangent), 1.0);
-#endif
-
-#if renderMode_Normals == 1
-    outputColor = vec4(PackToColor(mat.GeometricNormal), 1.0);
-#endif
-
-#if renderMode_BumpNormals == 1
-    outputColor = vec4(PackToColor(mat.Normal), 1.0);
-#endif
-
-#if (renderMode_Diffuse == 1)
-    outputColor.rgb = SrgbLinearToGamma(diffuseLighting * 0.5);
-#endif
-
-#if (renderMode_Specular == 1)
-    outputColor.rgb = SrgbLinearToGamma(specularLighting);
-#endif
-
-#if renderMode_PBR == 1
-    outputColor = vec4(mat.AmbientOcclusion, GetIsoRoughness(mat.Roughness), mat.Metalness, 1.0);
-#endif
-
-#if (renderMode_Cubemaps == 1)
-    // No bumpmaps, full reflectivity
-    vec3 viewmodeEnvMap = GetEnvironment(mat).rgb;
-    outputColor.rgb = SrgbLinearToGamma(viewmodeEnvMap);
-#endif
-
-#if renderMode_Illumination == 1
-    outputColor = vec4(SrgbLinearToGamma(lighting.DiffuseDirect + lighting.SpecularDirect), 1.0);
-#endif
-
-#if renderMode_Irradiance == 1 && (F_GLASS == 0)
-    outputColor = vec4(SrgbLinearToGamma(lighting.DiffuseIndirect), 1.0);
-#endif
-
-#if renderMode_Tint == 1
-    outputColor = vec4(vTintColor_ModelAmount.rgb, vVertexColor_Alpha.a);
-#endif
-
-#if renderMode_VertexColor == 1
-    outputColor.rgb = vVertexColor_Alpha.rgb;
-#endif
-
-#if renderMode_Terrain_Blend == 1 && defined(csgo_environment_blend_vfx)
-    outputColor.rgb = vColorBlendValues.rga;
+#if defined(csgo_environment_blend_vfx)
+    else if (g_iRenderMode == renderMode_TerrainBlend)
+    {
+        outputColor.rgb = vColorBlendValues.rga;
+    }
 #endif
 }

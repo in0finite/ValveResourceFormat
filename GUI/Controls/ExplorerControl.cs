@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using GUI.Utils;
 using ValveKeyValue;
+using ValveResourceFormat.IO;
 
 namespace GUI.Controls
 {
@@ -19,6 +20,7 @@ namespace GUI.Controls
             public TreeNode ParentNode { get; init; }
             public int AppID { get; init; }
             public TreeNode[] Children { get; set; }
+            public bool ExpandOnFirstSearch { get; set; } = true;
         }
 
         private const int APPID_RECENT_FILES = -1000;
@@ -121,8 +123,10 @@ namespace GUI.Controls
             var gamePathsToScan = new List<(int AppID, string AppName, string SteamPath, string GamePath)>();
 
             // Find game folders
+            var libraryfolders = Path.Join(steam, "steamapps", "libraryfolders.vdf");
+
+            if (!string.IsNullOrEmpty(steam) && File.Exists(libraryfolders))
             {
-                var libraryfolders = Path.Join(steam, "steamapps", "libraryfolders.vdf");
                 KVObject libraryFoldersKv;
 
                 using (var libraryFoldersStream = File.OpenRead(libraryfolders))
@@ -134,7 +138,12 @@ namespace GUI.Controls
 
                 foreach (var child in libraryFoldersKv.Children)
                 {
-                    steamPaths.Add(Path.GetFullPath(Path.Join(child["path"].ToString(CultureInfo.InvariantCulture), "steamapps")));
+                    var steamAppsPath = Path.GetFullPath(Path.Join(child["path"].ToString(CultureInfo.InvariantCulture), "steamapps"));
+
+                    if (Directory.Exists(steamAppsPath))
+                    {
+                        steamPaths.Add(steamAppsPath);
+                    }
                 }
 
                 foreach (var steamPath in steamPaths)
@@ -204,6 +213,37 @@ namespace GUI.Controls
 
                 gamePathsToScan.Sort(static (a, b) => a.AppID - b.AppID);
 
+                var checkedDirVpks = new Dictionary<string, bool>();
+
+                bool VpkPredicate(ref FileSystemEntry entry)
+                {
+                    if (entry.IsDirectory)
+                    {
+                        return false;
+                    }
+
+                    if (!entry.FileName.EndsWith(".vpk", StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+
+                    if (!Regexes.VpkNumberArchive().IsMatch(entry.FileName))
+                    {
+                        return true;
+                    }
+
+                    // If we matched dota_683.vpk, make sure dota_dir.vpk exists before excluding it from results
+                    var fixedPackage = $"{entry.ToFullPath()[..^8]}_dir.vpk";
+
+                    if (!checkedDirVpks.TryGetValue(fixedPackage, out var ret))
+                    {
+                        ret = !File.Exists(fixedPackage);
+                        checkedDirVpks.Add(fixedPackage, ret);
+                    }
+
+                    return ret;
+                }
+
                 foreach (var (appID, appName, steamPath, gamePath) in gamePathsToScan)
                 {
                     var foundFiles = new List<TreeNode>();
@@ -214,15 +254,7 @@ namespace GUI.Controls
                         (ref FileSystemEntry entry) => entry.ToSpecifiedFullPath(),
                         enumerationOptions)
                     {
-                        ShouldIncludePredicate = static (ref FileSystemEntry entry) =>
-                        {
-                            if (entry.IsDirectory)
-                            {
-                                return false;
-                            }
-
-                            return entry.FileName.EndsWith(".vpk", StringComparison.Ordinal) && !Regexes.VpkNumberArchive().IsMatch(entry.FileName);
-                        }
+                        ShouldIncludePredicate = VpkPredicate
                     };
 
                     foreach (var vpk in vpks)
@@ -428,9 +460,11 @@ namespace GUI.Controls
 
                 var path = (string)e.Node.Tag;
                 var isBookmarked = Settings.Config.BookmarkedFiles.Contains(path);
+                var isRecent = Settings.Config.RecentFiles.Contains(path);
 
                 addToFavoritesToolStripMenuItem.Visible = !isBookmarked;
                 removeFromFavoritesToolStripMenuItem.Visible = isBookmarked;
+                removeFromRecentToolStripMenuItem.Visible = isRecent;
 
                 fileContextMenuStrip.Show(e.Node.TreeView, e.Location);
             }
@@ -441,8 +475,8 @@ namespace GUI.Controls
             treeView.BeginUpdate();
             treeView.Nodes.Clear();
 
-            var showAll = filterTextBox.Text.Length == 0;
-            treeView.ShowPlusMinus = showAll;
+            var text = filterTextBox.Text.Replace(Path.DirectorySeparatorChar, '/');
+            var showAll = text.Length == 0;
 
             var foundNodes = new List<TreeNode>(TreeData.Count);
 
@@ -458,16 +492,28 @@ namespace GUI.Controls
                     continue;
                 }
 
-                var foundChildren = Array.FindAll(node.Children, (child) =>
-                {
-                    return child.Text.Contains(filterTextBox.Text, StringComparison.OrdinalIgnoreCase);
-                });
+                var first = true;
 
-                if (foundChildren.Length > 0)
+                foreach (var child in node.Children)
                 {
-                    node.ParentNode.Nodes.AddRange(foundChildren);
-                    node.ParentNode.Expand();
-                    foundNodes.Add(node.ParentNode);
+                    if (!child.Text.Contains(text, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    node.ParentNode.Nodes.Add(child);
+
+                    if (first)
+                    {
+                        first = false;
+                        foundNodes.Add(node.ParentNode);
+
+                        if (node.ExpandOnFirstSearch)
+                        {
+                            node.ExpandOnFirstSearch = false;
+                            node.ParentNode.Expand();
+                        }
+                    }
                 }
             }
 
@@ -621,6 +667,27 @@ namespace GUI.Controls
             RedrawList(APPID_BOOKMARKS, GetBookmarkedFileNodes());
         }
 
+        private void OnRemoveFromRecentClick(object sender, EventArgs e)
+        {
+            var control = (TreeView)((ContextMenuStrip)((ToolStripMenuItem)sender).Owner).SourceControl;
+
+            if (control.SelectedNode.Tag == null)
+            {
+                return;
+            }
+
+            var path = (string)control.SelectedNode.Tag;
+
+            Settings.Config.RecentFiles.Remove(path);
+
+            RedrawList(APPID_RECENT_FILES, GetRecentFileNodes());
+        }
+
+        private void OnExplorerLoad(object sender, EventArgs e)
+        {
+            filterTextBox.Focus();
+        }
+
         private Bitmap GetAppResizedImage(string path)
         {
             var originalImage = Image.FromFile(path);
@@ -643,7 +710,7 @@ namespace GUI.Controls
         private void DebugAddEmbeddedResourcesToTree()
         {
             var assembly = System.Reflection.Assembly.GetExecutingAssembly();
-            var embeddedResources = assembly.GetManifestResourceNames().Where(n => n.StartsWith("GUI.Utils.", StringComparison.Ordinal) && n.EndsWith("_c", StringComparison.Ordinal));
+            var embeddedResources = assembly.GetManifestResourceNames().Where(n => n.StartsWith("GUI.Utils.", StringComparison.Ordinal) && n.EndsWith(GameFileLoader.CompiledFileSuffix, StringComparison.Ordinal));
 
             var imageIndex = MainForm.GetImageIndexForExtension("bsp");
             var embeddedFilesTreeNode = new TreeNode("Embedded Resources")

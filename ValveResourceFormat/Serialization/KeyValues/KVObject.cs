@@ -9,7 +9,7 @@ namespace ValveResourceFormat.Serialization.KeyValues
     //Datastructure for a KV Object
     [DebuggerDisplay("{DebugRepresentation,nq}")]
     [DebuggerTypeProxy(typeof(DebugView))]
-    public class KVObject : IKeyValueCollection
+    public class KVObject : IEnumerable<KeyValuePair<string, object>>
     {
         public string Key { get; }
         public Dictionary<string, KVValue> Properties { get; }
@@ -204,9 +204,14 @@ namespace ValveResourceFormat.Serialization.KeyValues
                     return [.. properties];
                 }
 
-                if (value.Type == KVType.BINARY_BLOB && typeof(T) == typeof(byte))
+                if (value.Type == KVType.BINARY_BLOB)
                 {
-                    return (T[])value.Value;
+                    if (typeof(T) == typeof(byte))
+                    {
+                        return (T[])value.Value;
+                    }
+
+                    return ((byte[])value.Value).Cast<T>().ToArray();
                 }
 
                 if (value.Type != KVType.ARRAY && value.Type != KVType.ARRAY_TYPED)
@@ -231,7 +236,7 @@ namespace ValveResourceFormat.Serialization.KeyValues
             => GetEnumerator();
 
         #region Debugging
-#pragma warning disable IDE0052 // Remove unread private members
+#pragma warning disable IDE0051, IDE0052 // Remove unread private members
         internal string DebugRepresentation => DebugView.GetRepresentation(this);
 
         internal class DebugView
@@ -293,10 +298,10 @@ namespace ValveResourceFormat.Serialization.KeyValues
 
             [DebuggerBrowsable(DebuggerBrowsableState.RootHidden)]
             KVValue[] Items => obj.IsArray
-                ? obj.Properties.Values.ToArray()
+                ? [.. obj.Properties.Values]
                 : [];
         }
-#pragma warning restore IDE0052
+#pragma warning restore IDE0051, IDE0052
         #endregion Debugging
     }
 }

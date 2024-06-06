@@ -24,6 +24,21 @@ namespace ValveResourceFormat.ResourceTypes
         public Dictionary<string, string> StringAttributes { get; } = [];
         public Dictionary<string, string> DynamicExpressions { get; } = [];
 
+        private VsInputSignature? inputSignature;
+        public VsInputSignature InputSignature
+        {
+            get
+            {
+                if (!inputSignature.HasValue)
+                {
+                    var inputSignatureObject = GetInputSignatureObject();
+                    inputSignature = inputSignatureObject != null ? new(inputSignatureObject) : VsInputSignature.Empty;
+                }
+
+                return inputSignature.Value;
+            }
+        }
+
 
         public override void Read(BinaryReader reader, Resource resource)
         {
@@ -110,21 +125,16 @@ namespace ValveResourceFormat.ResourceTypes
                 }
             }
 
-            if (Resource?.EditInfo != null)
-            {
-                var specialDeps = (SpecialDependencies)Resource.EditInfo.Structs[ResourceEditInfo.REDIStruct.SpecialDependencies];
-                var hemiOctIsoRoughness_RG_B = specialDeps.List.Any(dependancy => dependancy.CompilerIdentifier == "CompileTexture" && dependancy.String == "Texture Compiler Version Mip HemiOctIsoRoughness_RG_B");
-                if (hemiOctIsoRoughness_RG_B)
-                {
-                    arguments.Add("HemiOctIsoRoughness_RG_B", 1);
-                }
-            }
-
             return arguments;
         }
 
-        public IKeyValueCollection GetInputSignature()
+        private KVObject GetInputSignatureObject()
         {
+            if (Resource is null)
+            {
+                return null;
+            }
+
             if (Resource.ContainsBlockType(BlockType.INSG))
             {
                 return ((BinaryKV3)Resource.GetBlockByType(BlockType.INSG)).Data;
@@ -154,6 +164,22 @@ namespace ValveResourceFormat.ResourceTypes
             return KeyValues3.ParseKVFile(ms).Root;
         }
 
+        public readonly struct VsInputSignature
+        {
+            public static readonly VsInputSignature Empty = new();
+            public InputSignatureElement[] Elements { get; }
+
+            public VsInputSignature()
+            {
+                Elements = [];
+            }
+
+            public VsInputSignature(KVObject data)
+            {
+                Elements = data.GetArray("m_elems").Select(x => new InputSignatureElement(x)).ToArray();
+            }
+        }
+
         public readonly struct InputSignatureElement
         {
             public string Name { get; }
@@ -161,7 +187,7 @@ namespace ValveResourceFormat.ResourceTypes
             public string D3DSemanticName { get; }
             public int D3DSemanticIndex { get; }
 
-            public InputSignatureElement(IKeyValueCollection data)
+            public InputSignatureElement(KVObject data)
             {
                 Name = data.GetProperty<string>("m_pName");
                 Semantic = data.GetProperty<string>("m_pSemantic");
@@ -170,14 +196,13 @@ namespace ValveResourceFormat.ResourceTypes
             }
         }
 
-        public static InputSignatureElement FindD3DInputSignatureElement(IKeyValueCollection insg, string d3dName, int d3dIndex)
+        public static InputSignatureElement FindD3DInputSignatureElement(VsInputSignature insg, string d3dName, int d3dIndex)
         {
-            foreach (var elemData in insg.GetArray<IKeyValueCollection>("m_elems"))
+            foreach (var element in insg.Elements)
             {
-                var elem = new InputSignatureElement(elemData);
-                if (elem.D3DSemanticName == d3dName && elem.D3DSemanticIndex == d3dIndex)
+                if (element.D3DSemanticName == d3dName && element.D3DSemanticIndex == d3dIndex)
                 {
-                    return elem;
+                    return element;
                 }
             }
 

@@ -7,7 +7,6 @@ namespace GUI.Controls
     class ControlPanelView : UserControl
     {
         protected virtual Panel ControlsPanel { get; }
-        private int currentControlsHeight = 10;
 
         public ControlPanelView()
         {
@@ -90,10 +89,31 @@ namespace GUI.Controls
             return trackBar;
         }
 
-        public void SetControlLocation(Control control)
+        public void AddDivider()
         {
-            control.Location = new Point(0, currentControlsHeight);
-            currentControlsHeight += control.Height;
+            var panel = new Panel
+            {
+                AutoSize = true,
+                Padding = new Padding(0, 10, 0, 10),
+            };
+
+            var label = new Label
+            {
+                AutoSize = false,
+                Dock = DockStyle.Top,
+                Height = 1,
+                BackColor = SystemColors.ActiveBorder,
+            };
+
+            panel.Controls.Add(label);
+            ControlsPanel.Controls.Add(panel);
+            SetControlLocation(panel);
+        }
+
+        private static void SetControlLocation(Control control)
+        {
+            control.Dock = DockStyle.Top;
+            control.BringToFront();
         }
     }
 }

@@ -5,8 +5,8 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using GUI.Controls;
 using GUI.Types.Exporter;
+using GUI.Types.PackageViewer;
 using GUI.Utils;
 using SteamDatabase.ValvePak;
 using ValveResourceFormat;
@@ -16,6 +16,11 @@ namespace GUI.Forms
 {
     partial class ExtractProgressForm : Form
     {
+        private class ExtractProgress(Action<string> SetProgress) : IProgress<string>
+        {
+            public void Report(string value) => SetProgress(value);
+        }
+
         private class FileTypeToExtract
         {
             public string OutputFormat;
@@ -31,7 +36,9 @@ namespace GUI.Forms
         private readonly HashSet<string> extractedFiles = [];
         private CancellationTokenSource cancellationTokenSource = new();
         private readonly GltfModelExporter gltfExporter;
+        private readonly IProgress<string> progressReporter;
         private Stopwatch exportStopwatch;
+        private int filesFailedToExport;
 
         private static readonly List<ResourceType> ExtractOrder =
         [
@@ -58,12 +65,13 @@ namespace GUI.Forms
             foreach (var resourceType in ExtractOrder)
             {
                 var extension = resourceType.GetExtension();
-                filesToExtractSorted.Add(extension + "_c", new());
+                filesToExtractSorted.Add(extension + GameFileLoader.CompiledFileSuffix, new());
             }
 
             this.path = path;
             this.decompile = decompile;
             this.exportData = exportData;
+            progressReporter = new ExtractProgress(SetProgress);
 
             if (decompile)
             {
@@ -72,7 +80,7 @@ namespace GUI.Forms
 
                 gltfExporter = new GltfModelExporter(trackingFileLoader)
                 {
-                    ProgressReporter = new Progress<string>(SetProgress),
+                    ProgressReporter = progressReporter,
                 };
             }
         }
@@ -124,7 +132,7 @@ namespace GUI.Forms
                     "vxml_c" => "xml",
                     "vcss_c" => "css",
                     "vsvg_c" => "svg",
-                    _ when type.Key.EndsWith("_c", StringComparison.OrdinalIgnoreCase) => type.Key[..^2],
+                    _ when type.Key.EndsWith(GameFileLoader.CompiledFileSuffix, StringComparison.OrdinalIgnoreCase) => type.Key[..^2],
                     _ => type.Key,
                 };
 
@@ -195,7 +203,7 @@ namespace GUI.Forms
                     foreach (var resourceType in ExtractOrder)
                     {
                         var extension = resourceType.GetExtension();
-                        var files = filesToExtractSorted[extension + "_c"];
+                        var files = filesToExtractSorted[extension + GameFileLoader.CompiledFileSuffix];
 
                         if (files.Count > 0)
                         {
@@ -229,6 +237,11 @@ namespace GUI.Forms
 
             Invoke(() =>
             {
+                if (filesFailedToExport > 0)
+                {
+                    SetProgress($"{filesFailedToExport} files failed to extract, check console for more information.");
+                }
+
                 Text = t.IsFaulted ? "Source 2 Viewer - Export failed, check console for details" : "Source 2 Viewer - Export completed";
                 cancelButton.Text = "Close";
                 extractProgressBar.Value = 100;
@@ -244,35 +257,49 @@ namespace GUI.Forms
             cancellationTokenSource.Cancel();
         }
 
-        public void QueueFiles(BetterTreeNode root)
+        public void QueueFiles(IBetterBaseItem root)
         {
-            if (!root.IsFolder)
+            if (root.IsFolder)
             {
-                var file = root.PackageEntry;
+                QueueFiles(root.PkgNode);
+            }
+            else
+            {
+                QueueFiles(root.PackageEntry);
+            }
+        }
 
-                if (fileTypesToExtract.TryGetValue(file.TypeName, out var fileType))
-                {
-                    fileType.Count++;
-                }
-                else
-                {
-                    fileTypesToExtract[file.TypeName] = new FileTypeToExtract(); // Type to be filled in later
-                }
+        public void QueueFiles(VirtualPackageNode root)
+        {
+            foreach (var node in root.Folders)
+            {
+                QueueFiles(node.Value);
+            }
 
-                if (decompile && filesToExtractSorted.TryGetValue(file.TypeName, out var specializedQueue))
-                {
-                    specializedQueue.Enqueue(file);
-                    return;
-                }
+            foreach (var file in root.Files)
+            {
+                QueueFiles(file);
+            }
+        }
 
-                filesToExtract.Enqueue(file);
+        public void QueueFiles(PackageEntry file)
+        {
+            if (fileTypesToExtract.TryGetValue(file.TypeName, out var fileType))
+            {
+                fileType.Count++;
+            }
+            else
+            {
+                fileTypesToExtract[file.TypeName] = new FileTypeToExtract(); // Type to be filled in later
+            }
+
+            if (decompile && filesToExtractSorted.TryGetValue(file.TypeName, out var specializedQueue))
+            {
+                specializedQueue.Enqueue(file);
                 return;
             }
 
-            foreach (BetterTreeNode node in root.Nodes)
-            {
-                QueueFiles(node);
-            }
+            filesToExtract.Enqueue(file);
         }
 
         private async Task ExtractFilesAsync(Queue<PackageEntry> filesToExtract)
@@ -314,7 +341,7 @@ namespace GUI.Forms
 
                 Directory.CreateDirectory(outFolder);
 
-                if (!decompile || !packageFile.TypeName.EndsWith("_c", StringComparison.Ordinal))
+                if (!decompile || !packageFile.TypeName.EndsWith(GameFileLoader.CompiledFileSuffix, StringComparison.Ordinal))
                 {
                     // Extract as is
                     var outStream = File.OpenWrite(outFilePath);
@@ -328,7 +355,20 @@ namespace GUI.Forms
                 {
                     FileName = fileFullName,
                 };
-                resource.Read(stream);
+
+                try
+                {
+                    resource.Read(stream);
+                }
+                catch (Exception e)
+                {
+                    filesFailedToExport++;
+
+                    Log.Error(nameof(ExtractProgressForm), $"Failed to extract '{fileFullName}': {e}");
+                    SetProgress($"Failed to extract '{fileFullName}': {e.Message}");
+
+                    continue;
+                }
 
                 await ExtractFile(resource, fileFullName, outFilePath).ConfigureAwait(false);
             }
@@ -349,7 +389,7 @@ namespace GUI.Forms
                 return;
             }
 
-            if (outExtension == ".sound" || outExtension == ".image" || outExtension.EndsWith("_c", StringComparison.Ordinal))
+            if (outExtension == ".sound" || outExtension == ".image" || outExtension.EndsWith(GameFileLoader.CompiledFileSuffix, StringComparison.Ordinal))
             {
                 var extension = FileExtract.GetExtension(resource);
 
@@ -367,7 +407,7 @@ namespace GUI.Forms
 
             try
             {
-                contentFile = FileExtract.Extract(resource, exportData.VrfGuiContext.FileLoader);
+                contentFile = FileExtract.Extract(resource, exportData.VrfGuiContext.FileLoader, progressReporter);
 
                 if (contentFile.Data != null)
                 {
@@ -378,7 +418,7 @@ namespace GUI.Forms
                 string contentRelativeFolder;
                 foreach (var additionalFile in contentFile.AdditionalFiles)
                 {
-                    extractedFiles.Add(additionalFile.FileName + "_c");
+                    extractedFiles.Add(additionalFile.FileName + GameFileLoader.CompiledFileSuffix);
                     var fileNameOut = additionalFile.FileName;
 
                     if (additionalFile.Data != null)
@@ -407,6 +447,8 @@ namespace GUI.Forms
             }
             catch (Exception e)
             {
+                filesFailedToExport++;
+
                 Log.Error(nameof(ExtractProgressForm), $"Failed to extract '{inFilePath}': {e}");
                 SetProgress($"Failed to extract '{inFilePath}': {e.Message}");
             }
@@ -439,6 +481,8 @@ namespace GUI.Forms
                 }
                 catch (Exception e)
                 {
+                    filesFailedToExport++;
+
                     Log.Error(nameof(ExtractProgressForm), $"Failed to extract subfile '{contentSubFile.FileName}': {e}");
                     SetProgress($"Failed to extract subfile '{contentSubFile.FileName}': {e.Message}");
                     continue;
@@ -486,10 +530,16 @@ namespace GUI.Forms
                 return;
             }
 
-            Invoke(() =>
+            var str = $"[{DateTime.Now:HH:mm:ss.fff}] {text}{Environment.NewLine}";
+
+            if (progressLog.InvokeRequired)
             {
-                progressLog.AppendText($"[{DateTime.Now:HH:mm:ss.fff}] {text}{Environment.NewLine}");
-            });
+                progressLog.Invoke(progressLog.AppendText, str);
+            }
+            else
+            {
+                progressLog.AppendText(str);
+            }
         }
     }
 }

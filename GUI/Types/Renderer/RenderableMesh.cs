@@ -6,6 +6,7 @@ using ValveResourceFormat;
 using ValveResourceFormat.Blocks;
 using ValveResourceFormat.ResourceTypes;
 using ValveResourceFormat.Serialization;
+using ValveResourceFormat.Serialization.KeyValues;
 using ValveResourceFormat.Utils;
 
 namespace GUI.Types.Renderer
@@ -19,7 +20,7 @@ namespace GUI.Types.Renderer
 
         private readonly VrfGuiContext guiContext;
         public List<DrawCall> DrawCallsOpaque { get; } = [];
-        public List<DrawCall> DrawCallsOverlay { get; } = new List<DrawCall>(1);
+        public List<DrawCall> DrawCallsOverlay { get; } = [];
         public List<DrawCall> DrawCallsBlended { get; } = [];
         private IEnumerable<DrawCall> DrawCalls => DrawCallsOpaque.Concat(DrawCallsOverlay).Concat(DrawCallsBlended);
 
@@ -36,7 +37,7 @@ namespace GUI.Types.Renderer
 #endif
 
         public RenderableMesh(Mesh mesh, int meshIndex, Scene scene, Model model = null,
-            Dictionary<string, string> initialMaterialTable = null, Morph morph = null, string debugLabel = null)
+            Dictionary<string, string> initialMaterialTable = null, Morph morph = null, bool isAggregate = false, string debugLabel = null)
         {
 #if DEBUG
             if (debugLabel == null && model != null)
@@ -73,7 +74,7 @@ namespace GUI.Types.Renderer
             MeshIndex = meshIndex;
 
             var meshSceneObjects = mesh.Data.GetArray("m_sceneObjects");
-            ConfigureDrawCalls(scene, vbib, meshSceneObjects, initialMaterialTable);
+            ConfigureDrawCalls(scene, vbib, meshSceneObjects, initialMaterialTable, isAggregate);
 
             if (morph != null)
             {
@@ -85,25 +86,6 @@ namespace GUI.Types.Renderer
             => DrawCalls
                 .SelectMany(drawCall => drawCall.Material.Shader.RenderModes)
                 .Distinct();
-
-        public void SetRenderMode(string renderMode)
-        {
-            foreach (var call in DrawCalls)
-            {
-                // Recycle old shader parameters that are not render modes since we are scrapping those anyway
-                var parameters = call.Material.Shader.Parameters
-                    .Where(kvp => !kvp.Key.StartsWith(ShaderLoader.RenderModeDefinePrefix, StringComparison.Ordinal))
-                    .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-
-                if (renderMode != null && call.Material.Shader.RenderModes.Contains(renderMode))
-                {
-                    parameters.Add(string.Concat(ShaderLoader.RenderModeDefinePrefix, renderMode), 1);
-                }
-
-                call.Material.Shader = guiContext.ShaderLoader.LoadShader(call.Material.Shader.Name, parameters);
-                UpdateVertexArrayObject(call);
-            }
-        }
 
 #if DEBUG
         public void UpdateVertexArrayObjects()
@@ -144,7 +126,13 @@ namespace GUI.Types.Renderer
 
         public void SetMaterialForMaterialViewer(Resource resourceMaterial)
         {
-            foreach (var drawCall in DrawCalls)
+            var oldDrawCalls = DrawCalls.ToList();
+
+            DrawCallsOpaque.Clear();
+            DrawCallsOverlay.Clear();
+            DrawCallsBlended.Clear();
+
+            foreach (var drawCall in oldDrawCalls)
             {
                 var material = drawCall.Material;
                 var materialData = material.Material;
@@ -155,6 +143,16 @@ namespace GUI.Types.Renderer
 
                 drawCall.Material = guiContext.MaterialLoader.LoadMaterial(resourceMaterial, dynamicParams);
                 UpdateVertexArrayObject(drawCall);
+
+                // Ignore overlays in material viewer, since there is nothing to overlay.
+                if (drawCall.Material.IsTranslucent)
+                {
+                    DrawCallsBlended.Add(drawCall);
+                }
+                else
+                {
+                    DrawCallsOpaque.Add(drawCall);
+                }
             }
         }
 
@@ -174,7 +172,7 @@ namespace GUI.Types.Renderer
 #endif
         }
 
-        private void ConfigureDrawCalls(Scene scene, VBIB vbib, IKeyValueCollection[] sceneObjects, Dictionary<string, string> materialReplacementTable)
+        private void ConfigureDrawCalls(Scene scene, VBIB vbib, KVObject[] sceneObjects, Dictionary<string, string> materialReplacementTable, bool isAggregate)
         {
             if (vbib.VertexBuffers.Count == 0)
             {
@@ -246,18 +244,7 @@ namespace GUI.Types.Renderer
                         );
                     }
 
-                    if (drawCall.Material.IsOverlay)
-                    {
-                        DrawCallsOverlay.Add(drawCall);
-                    }
-                    else if (drawCall.Material.IsTranslucent)
-                    {
-                        DrawCallsBlended.Add(drawCall);
-                    }
-                    else
-                    {
-                        DrawCallsOpaque.Add(drawCall);
-                    }
+                    AddDrawCall(drawCall, isAggregate);
 
                     drawCall.VertexIdOffset = vertexOffset;
                     vertexOffset += objectDrawCall.GetInt32Property("m_nVertexCount");
@@ -265,40 +252,44 @@ namespace GUI.Types.Renderer
                     i++;
                 }
             }
-
-            DrawCallsOpaque.TrimExcess();
-            DrawCallsOverlay.TrimExcess();
-            DrawCallsBlended.TrimExcess();
         }
 
-        private DrawCall CreateDrawCall(IKeyValueCollection objectDrawCall, RenderMaterial material, VBIB vbib)
+        private void AddDrawCall(DrawCall drawCall, bool isAggregate)
+        {
+            if (isAggregate)
+            {
+                DrawCallsOpaque.Add(drawCall);
+                return;
+            }
+
+            if (drawCall.Material.IsOverlay)
+            {
+                DrawCallsOverlay.Add(drawCall);
+            }
+            else if (drawCall.Material.IsTranslucent)
+            {
+                DrawCallsBlended.Add(drawCall);
+            }
+            else
+            {
+                DrawCallsOpaque.Add(drawCall);
+            }
+        }
+
+        private DrawCall CreateDrawCall(KVObject objectDrawCall, RenderMaterial material, VBIB vbib)
         {
             var drawCall = new DrawCall()
             {
                 Material = material,
             };
 
-            var primitiveType = objectDrawCall.GetProperty<object>("m_nPrimitiveType");
+            var primitiveType = objectDrawCall.GetEnumValue<RenderPrimitiveType>("m_nPrimitiveType");
 
-            if (primitiveType is byte primitiveTypeByte)
+            drawCall.PrimitiveType = primitiveType switch
             {
-                if ((RenderPrimitiveType)primitiveTypeByte == RenderPrimitiveType.RENDER_PRIM_TRIANGLES)
-                {
-                    drawCall.PrimitiveType = PrimitiveType.Triangles;
-                }
-            }
-            else if (primitiveType is string primitiveTypeString)
-            {
-                if (primitiveTypeString == "RENDER_PRIM_TRIANGLES")
-                {
-                    drawCall.PrimitiveType = PrimitiveType.Triangles;
-                }
-            }
-
-            if (drawCall.PrimitiveType != PrimitiveType.Triangles)
-            {
-                throw new NotImplementedException("Unknown PrimitiveType in drawCall! (" + primitiveType + ")");
-            }
+                RenderPrimitiveType.RENDER_PRIM_TRIANGLES => PrimitiveType.Triangles,
+                _ => throw new NotImplementedException($"Unknown PrimitiveType in drawCall! {primitiveType}"),
+            };
 
             // Index buffer
             {

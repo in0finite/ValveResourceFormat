@@ -70,14 +70,17 @@ namespace GUI.Types.Renderer
                 var attributeLocation = -1;
                 var insgElemName = string.Empty;
 
-                if (material.VsInputSignature is not null)
+                if (material.Material is { InputSignature.Elements.Length: > 0 })
                 {
-                    var elem = Material.FindD3DInputSignatureElement(material.VsInputSignature, attribute.SemanticName, attribute.SemanticIndex);
-
-                    if (elem.Name is not null)
+                    var matchingName = Material.FindD3DInputSignatureElement(material.Material.InputSignature, attribute.SemanticName, attribute.SemanticIndex).Name;
+                    if (!string.IsNullOrEmpty(matchingName))
                     {
-                        insgElemName = elem.Name;
-                        attributeLocation = GL.GetAttribLocation(material.Shader.Program, insgElemName);
+                        insgElemName = matchingName;
+                        attributeLocation = GL.GetAttribLocation(material.Shader.Program, insgElemName switch
+                        {
+                            "vLightmapUVW" => "vLightmapUV",
+                            _ => insgElemName,
+                        });
                     }
                 }
 

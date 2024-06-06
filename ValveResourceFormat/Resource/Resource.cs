@@ -1,5 +1,4 @@
 using System.IO;
-using System.Reflection;
 using System.Text;
 using ValveResourceFormat.Blocks;
 using ValveResourceFormat.Blocks.ResourceEditInfoStructs;
@@ -216,7 +215,7 @@ namespace ValveResourceFormat
 
             if (FileName != null)
             {
-                ResourceType = DetermineResourceTypeByFileExtension(Path.GetExtension(FileName));
+                ResourceType = ResourceTypeExtensions.DetermineByFileExtension(Path.GetExtension(FileName));
             }
 
             Version = Reader.ReadUInt16();
@@ -278,14 +277,19 @@ namespace ValveResourceFormat
 
                         EditInfo = (ResourceEditInfo)block;
 
-                        // Try to determine resource type by looking at first compiler indentifier
+                        // Try to determine resource type by looking at the compiler indentifiers
                         if (ResourceType == ResourceType.Unknown && EditInfo.Structs.TryGetValue(ResourceEditInfo.REDIStruct.SpecialDependencies, out var specialBlock))
                         {
                             var specialDeps = (SpecialDependencies)specialBlock;
 
-                            if (specialDeps.List.Count > 0)
+                            foreach (var specialDep in specialDeps.List)
                             {
-                                ResourceType = DetermineResourceTypeByCompilerIdentifier(specialDeps.List[0]);
+                                ResourceType = DetermineResourceTypeByCompilerIdentifier(specialDep);
+
+                                if (ResourceType != ResourceType.Unknown)
+                                {
+                                    break;
+                                }
                             }
                         }
 
@@ -296,7 +300,7 @@ namespace ValveResourceFormat
 
                             if (inputDeps.List.Count == 1)
                             {
-                                ResourceType = DetermineResourceTypeByFileExtension(Path.GetExtension(inputDeps.List[0].ContentRelativeFilename));
+                                ResourceType = ResourceTypeExtensions.DetermineByFileExtension(Path.GetExtension(inputDeps.List[0].ContentRelativeFilename));
                             }
                         }
 
@@ -304,21 +308,6 @@ namespace ValveResourceFormat
 
                     case BlockType.NTRO:
                         block.Read(Reader, this);
-
-                        if (ResourceType == ResourceType.Unknown && IntrospectionManifest.ReferencedStructs.Count > 0)
-                        {
-                            switch (IntrospectionManifest.ReferencedStructs[0].Name)
-                            {
-                                case "VSoundEventScript_t":
-                                    ResourceType = ResourceType.SoundEventScript;
-                                    break;
-
-                                case "CWorldVisibility":
-                                    ResourceType = ResourceType.WorldVisibility;
-                                    break;
-                            }
-                        }
-
                         break;
                 }
 
@@ -331,6 +320,13 @@ namespace ValveResourceFormat
                 {
                     block.Read(Reader, this);
                 }
+            }
+
+            if (ResourceType == ResourceType.Sound && ContainsBlockType(BlockType.CTRL)) // Version >= 5, but other ctrl-type sounds have version 0
+            {
+                var block = new Sound();
+                block.ConstructFromCtrl(Reader, this);
+                Blocks.Add(block);
             }
 
             var fullFileSize = FullFileSize;
@@ -397,6 +393,8 @@ namespace ValveResourceFormat
                 nameof(BlockType.SrMa) => new BinaryKV3(BlockType.SrMa), // SourceMap
                 nameof(BlockType.LaCo) => new BinaryKV3(BlockType.LaCo), // vxml ast
                 nameof(BlockType.STAT) => new BinaryKV3(BlockType.STAT),
+                nameof(BlockType.FLCI) => new BinaryKV3(BlockType.FLCI),
+                nameof(BlockType.DSTF) => new BinaryKV3(BlockType.DSTF),
                 nameof(BlockType.MRPH) => new Morph(BlockType.MRPH),
                 nameof(BlockType.ANIM) => new KeyValuesOrNTRO(BlockType.ANIM, "AnimationResourceData_t"),
                 nameof(BlockType.ASEQ) => new KeyValuesOrNTRO(BlockType.ASEQ, "SequenceGroupResourceData_t"),
@@ -454,9 +452,6 @@ namespace ValveResourceFormat
                 case ResourceType.Material:
                     return new Material();
 
-                case ResourceType.SoundEventScript:
-                    return new SoundEventScript();
-
                 case ResourceType.SoundStackScript:
                     return new SoundStackScript();
 
@@ -502,30 +497,6 @@ namespace ValveResourceFormat
             }
 
             return new ResourceData();
-        }
-
-        internal static ResourceType DetermineResourceTypeByFileExtension(string extension)
-        {
-            if (string.IsNullOrEmpty(extension))
-            {
-                return ResourceType.Unknown;
-            }
-
-            extension = extension.EndsWith("_c", StringComparison.Ordinal) ? extension[1..^2] : extension[1..];
-
-            var fields = typeof(ResourceType).GetFields(BindingFlags.Public | BindingFlags.Static);
-
-            foreach (var field in fields)
-            {
-                var fieldExtension = field.GetCustomAttribute<ExtensionAttribute>(inherit: false)?.Extension;
-
-                if (fieldExtension == extension)
-                {
-                    return (ResourceType)field.GetValue(null);
-                }
-            }
-
-            return ResourceType.Unknown;
         }
 
         private static bool IsHandledResourceType(ResourceType type)
@@ -597,8 +568,14 @@ namespace ValveResourceFormat
                     return ResourceType.PulseGraphDef;
                 case "SmartProp":
                     return ResourceType.SmartProp;
+                case "GraphInstance":
+                    return ResourceType.ProcessingGraphInstance;
                 case "DotaHeroList":
                     return ResourceType.DotaHeroList;
+                case "DotaPatchNotes":
+                    return ResourceType.DotaPatchNotes;
+                case "DotaVisualNovels":
+                    return ResourceType.DotaVisualNovels;
                 case "SBData":
                 case "ManagedResourceCompiler": // This is without the "Compile" prefix
                     return ResourceType.SboxManagedResource;

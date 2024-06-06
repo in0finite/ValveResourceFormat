@@ -63,6 +63,10 @@ namespace GUI.Types.ParticleRenderer
                     input1 = parse.Float("m_flInput1");
                     output0 = parse.Float("m_flOutput0");
                     output1 = parse.Float("m_flOutput1");
+
+                    MathUtils.MinMaxFixUp(ref input0, ref input1);
+                    MathUtils.MinMaxFixUp(ref output0, ref output1);
+
                     break;
 
                 case PfMapType.Curve:
@@ -101,9 +105,13 @@ namespace GUI.Types.ParticleRenderer
                     return value * multFactor;
 
                 case PfMapType.Remap:
-                    var remappedTo0_1Range = MathUtils.Remap(value, input0, input1);
-
-                    if (InputMode == PfInputMode.Looped) { remappedTo0_1Range = MathUtils.Fract(remappedTo0_1Range); }
+                    var valueIn = InputMode switch
+                    {
+                        PfInputMode.Clamped => Math.Clamp(value, input0, input1),
+                        PfInputMode.Looped => value % (input1 - input0),
+                        _ => value
+                    };
+                    var remappedTo0_1Range = MathUtils.Remap(valueIn, input0, input1);
 
                     return MathUtils.Lerp(remappedTo0_1Range, output0, output1);
 

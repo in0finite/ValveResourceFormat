@@ -58,12 +58,15 @@ namespace Tests
             foreach (var testCase in testCases)
             {
                 var result = ComputeVCSFileName(testCase.FileName);
+                var opposite = ComputeVCSFileName(testCase.ShaderName, testCase.ProgramType, testCase.Platform, testCase.ShaderModel);
+
                 Assert.Multiple(() =>
                 {
                     Assert.That(result.ShaderName, Is.EqualTo(testCase.ShaderName));
                     Assert.That(result.PlatformType, Is.EqualTo(testCase.Platform));
                     Assert.That(result.ShaderModelType, Is.EqualTo(testCase.ShaderModel));
                     Assert.That(result.ProgramType, Is.EqualTo(testCase.ProgramType));
+                    Assert.That(opposite, Is.EqualTo(Path.GetFileName(testCase.FileName)));
                 });
             }
         }
@@ -71,7 +74,7 @@ namespace Tests
         [Test]
         public void CompiledShaderInResourceThrows()
         {
-            var path = Path.Combine(ShadersDir, "error_pcgl_40_ps.vcs");
+            var path = Path.Combine(ShadersDir, "vcs64_error_pcgl_40_ps.vcs");
             using var resource = new Resource();
 
             var ex = Assert.Throws<InvalidDataException>(() => resource.Read(path));
@@ -82,7 +85,7 @@ namespace Tests
         [Test]
         public void TestZFrameWriteSequences()
         {
-            var path = Path.Combine(ShadersDir, "error_pcgl_40_ps.vcs");
+            var path = Path.Combine(ShadersDir, "vcs64_error_pcgl_40_ps.vcs");
             using var shader = new ShaderFile();
             shader.Read(path);
 
@@ -162,11 +165,11 @@ namespace Tests
         [Test]
         public void VfxShaderExtract_Invalid()
         {
-            var path = Path.Combine(ShadersDir, "error_pcgl_40_ps.vcs");
+            var path = Path.Combine(ShadersDir, "vcs64_error_pcgl_40_ps.vcs");
             using var shader = new ShaderFile();
             shader.Read(path);
 
-            var ex = Assert.Throws<InvalidOperationException>(() => new ShaderExtract(ShaderCollection.FromEnumerable(new[] { shader })));
+            var ex = Assert.Throws<InvalidOperationException>(() => new ShaderExtract(ShaderCollection.FromEnumerable([shader])));
 
             Assert.That(ex.Message, Does.Contain("cannot continue without at least a features file"));
         }
@@ -174,11 +177,11 @@ namespace Tests
         [Test]
         public void VfxShaderExtract_Minimal()
         {
-            var path = Path.Combine(ShadersDir, "error_pc_40_features.vcs");
+            var path = Path.Combine(ShadersDir, "vcs64_error_pc_40_features.vcs");
             using var shader = new ShaderFile();
             shader.Read(path);
 
-            var extract = new ShaderExtract(ShaderCollection.FromEnumerable(new[] { shader }));
+            var extract = new ShaderExtract(ShaderCollection.FromEnumerable([shader]));
 
             var vfx = extract.ToVFX(ShaderExtract.ShaderExtractParams.Inspect);
             vfx = extract.ToVFX(ShaderExtract.ShaderExtractParams.Export);
@@ -191,7 +194,7 @@ namespace Tests
         public void VfxShaderExtract_OptionsTest()
         {
             using var collection = new ShaderCollection();
-            foreach (var file in Directory.GetFiles(ShadersDir, "error_pc_40_*.vcs"))
+            foreach (var file in Directory.GetFiles(ShadersDir, "vcs64_error_pc_40_*.vcs"))
             {
                 var shader = new ShaderFile();
 

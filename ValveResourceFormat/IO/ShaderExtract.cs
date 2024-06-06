@@ -14,13 +14,13 @@ public sealed class ShaderExtract
     {
         public bool CollapseBuffers_InInclude { get; init; }
         public bool CollapseBuffers_InPlace { get; init; }
-        public static HashSet<string> BuffersToCollapse => new()
-        {
+        public static HashSet<string> BuffersToCollapse =>
+        [
             //"PerViewConstantBuffer_t",
             //"PerViewConstantBufferVR_t",
             //"PerViewLightingConstantBufferVr_t",
             //"DotaGlobalParams_t",
-        };
+        ];
 
         public bool ForceWrite_UncertainEnumsAsInts { get; init; }
         public bool NoHungarianTypeGuessing { get; init; }
@@ -82,7 +82,9 @@ public sealed class ShaderExtract
     private Dictionary<string, IndentedTextWriter> IncludeWriters { get; set; }
 
     public ShaderExtract(Resource resource)
-        : this((SboxShader)resource.GetBlockByType(BlockType.DXBC))
+        : this((SboxShader)(resource.GetBlockByType(BlockType.SPRV)
+                         ?? resource.GetBlockByType(BlockType.DXBC)
+                         ?? resource.GetBlockByType(BlockType.DATA)))
     { }
 
     public ShaderExtract(SboxShader sboxShaderCollection)
@@ -216,6 +218,7 @@ public sealed class ShaderExtract
         writer.WriteLine($"Description = \"{Features.FeaturesHeader.FileDescription}\";");
         writer.WriteLine($"DevShader = {(Features.FeaturesHeader.DevShader == 0 ? "false" : "true")};");
         writer.WriteLine($"Version = {Features.FeaturesHeader.Version};");
+        writer.WriteLine($"// VcsFileVersion = {Features.FeaturesHeader.VcsFileVersion};");
 
         writer.Indent--;
         writer.WriteLine("}");
@@ -1165,9 +1168,9 @@ public sealed class ShaderExtract
         static string GetFuncName(string func, int cutOff)
             => cutOff == 3 ? func : func + (4 - cutOff);
 
-        if (intDefsCutOff <= 3)
+        if (intDefsCutOff <= 3 || floatDefsCutOff <= 3)
         {
-            if (floatDefsCutOff <= 3)
+            if (floatDefsCutOff <= intDefsCutOff)
             {
                 var defaults = string.Join(", ", param.FloatDefs[..^floatDefsCutOff]);
                 annotations.Add($"{GetFuncName("Default", floatDefsCutOff)}({defaults});");
@@ -1297,7 +1300,14 @@ public sealed class ShaderExtract
 
         annotations.Add($"SrgbRead({(param.Id == 0 ? "false" : "true")});");
 
-        writer.WriteLine($"CreateTexture2DWithoutSampler({param.Name}){GetVfxAttributes(annotations)};");
+        const string Sampler = "Sampler";
+        var typeString = param.VfxType.ToString();
+
+        typeString = typeString.StartsWith(Sampler, StringComparison.Ordinal)
+            ? "Texture" + typeString.Remove(0, Sampler.Length)
+            : typeString; // not even a texture type?
+
+        writer.WriteLine($"{typeString} {param.Name}{GetVfxAttributes(annotations)};");
     }
 
     private static void HandleParameterAttribute(ParamBlock param, List<string> annotations)

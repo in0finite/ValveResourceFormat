@@ -1,6 +1,6 @@
 using System.IO;
 using ValveResourceFormat.Blocks;
-using ValveResourceFormat.Serialization;
+using ValveResourceFormat.Serialization.KeyValues;
 
 namespace ValveResourceFormat.ResourceTypes
 {
@@ -10,9 +10,8 @@ namespace ValveResourceFormat.ResourceTypes
         private readonly BlockType KVBlockType;
         public override BlockType Type => KVBlockType;
 
-        public Resource Resource { get; private set; }
-        public IKeyValueCollection Data { get; private set; }
-        public bool UpgradeToKV3 { get; private set; }
+        protected Resource Resource { get; private set; }
+        public KVObject Data { get; private set; }
 
         private ResourceData BackingData;
 
@@ -21,11 +20,10 @@ namespace ValveResourceFormat.ResourceTypes
             KVBlockType = BlockType.DATA;
         }
 
-        public KeyValuesOrNTRO(BlockType type, string introspectionStructName, bool upgradeToKV3 = false)
+        public KeyValuesOrNTRO(BlockType type, string introspectionStructName)
         {
             KVBlockType = type;
             IntrospectionStructName = introspectionStructName;
-            UpgradeToKV3 = upgradeToKV3;
         }
 
         public override void Read(BinaryReader reader, Resource resource)
@@ -33,7 +31,6 @@ namespace ValveResourceFormat.ResourceTypes
             Resource = resource;
 
             // It is possible to have MDAT block with NTRO in a file, but it will be KV3 anyway.
-            // TODO: The whole KeyValuesOrNTRO needs a cleanup to more elegantly handle upconverting NTRO into KV3.
             if (!resource.ContainsBlockType(BlockType.NTRO) || KVBlockType == BlockType.MDAT)
             {
                 var kv3 = new BinaryKV3(KVBlockType)
@@ -54,7 +51,7 @@ namespace ValveResourceFormat.ResourceTypes
                     Size = Size,
                 };
                 ntro.Read(reader, resource);
-                Data = UpgradeToKV3 ? ntro.Output.ToKVObject() : ntro.Output;
+                Data = ntro.Output;
                 BackingData = ntro;
             }
         }

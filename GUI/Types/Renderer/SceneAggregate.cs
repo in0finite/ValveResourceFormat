@@ -1,6 +1,7 @@
 using System.Linq;
 using ValveResourceFormat.ResourceTypes;
 using ValveResourceFormat.Serialization;
+using ValveResourceFormat.Serialization.KeyValues;
 
 namespace GUI.Types.Renderer
 {
@@ -36,7 +37,7 @@ namespace GUI.Types.Renderer
             /// TODO: Perhaps use <see cref="ModelSceneNode.LoadMeshes">
             if (embeddedMeshes.Count != 0)
             {
-                RenderMesh = new RenderableMesh(embeddedMeshes.First().Mesh, 0, Scene, model);
+                RenderMesh = new RenderableMesh(embeddedMeshes.First().Mesh, 0, Scene, model, isAggregate: true);
 
                 if (embeddedMeshes.Count > 1)
                 {
@@ -59,13 +60,13 @@ namespace GUI.Types.Renderer
                     return;
                 }
 
-                RenderMesh = new RenderableMesh((Mesh)newResource.DataBlock, refMesh.MeshIndex, Scene, model);
+                RenderMesh = new RenderableMesh((Mesh)newResource.DataBlock, refMesh.MeshIndex, Scene, model, isAggregate: true);
             }
 
             LocalBoundingBox = RenderMesh.BoundingBox;
         }
 
-        public IEnumerable<Fragment> CreateFragments(IKeyValueCollection aggregateSceneObject)
+        public IEnumerable<Fragment> CreateFragments(KVObject aggregateSceneObject)
         {
             var aggregateMeshes = aggregateSceneObject.GetArray("m_aggregateMeshes");
 
@@ -134,7 +135,6 @@ namespace GUI.Types.Renderer
 
         public override void SetRenderMode(string renderMode)
         {
-            RenderMesh.SetRenderMode(renderMode);
         }
 
 #if DEBUG

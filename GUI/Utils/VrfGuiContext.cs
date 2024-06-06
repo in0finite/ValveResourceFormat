@@ -43,7 +43,13 @@ namespace GUI.Utils
         private readonly int ContextId = ++LastContextId;
 #endif
 
-        public VrfGuiContext(string fileName, VrfGuiContext parentGuiContext)
+        public VrfGuiContext()
+        {
+            MaterialLoader = new MaterialLoader(this);
+            ShaderLoader = new ShaderLoader(this);
+        }
+
+        public VrfGuiContext(string fileName, VrfGuiContext parentGuiContext) : this()
         {
 #if DEBUG
             Log.Debug(nameof(VrfGuiContext), $"#{ContextId} created");
@@ -51,8 +57,6 @@ namespace GUI.Utils
 
             FileName = fileName;
             ParentGuiContext = parentGuiContext;
-            MaterialLoader = new MaterialLoader(this);
-            ShaderLoader = new ShaderLoader(this);
             FileLoader = new AdvancedGuiFileLoader(this);
             MeshBufferCache = new GPUMeshBufferCache();
 
@@ -96,9 +100,7 @@ namespace GUI.Utils
         }
 
         public Resource LoadFile(string file) => FileLoader.LoadFile(file);
-
-        private const string CompiledFileSuffix = "_c";
-        public Resource LoadFileCompiled(string file) => FileLoader.LoadFile(string.Concat(file, CompiledFileSuffix));
+        public Resource LoadFileCompiled(string file) => FileLoader.LoadFileCompiled(file);
 
         public void ClearCache()
         {

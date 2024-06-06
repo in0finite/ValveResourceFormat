@@ -23,6 +23,8 @@ namespace GUI.Types.Renderer
             Resource = resource;
             Tabs = tabs;
 
+            AddShaderButton();
+
             Camera.ModifySpeed(0);
         }
 
@@ -40,27 +42,15 @@ namespace GUI.Types.Renderer
         {
             base.LoadScene();
 
-            var assembly = Assembly.GetExecutingAssembly();
-            using var stream = assembly.GetManifestResourceStream($"GUI.Utils.env_cubemap.vmdl_c");
+            var node = CreatePreviewModel();
 
-            using var cubemapResource = new ValveResourceFormat.Resource()
-            {
-                FileName = "env_cubemap.vmdl_c"
-            };
-            cubemapResource.Read(stream);
-
-            var node = new ModelSceneNode(Scene, (Model)cubemapResource.DataBlock);
-
-            foreach (var renderable in node.RenderableMeshes)
-            {
-                renderable.SetMaterialForMaterialViewer(Resource);
-            }
-
+            Scene.ShowToolsMaterials = true;
             Scene.Add(node, false);
 
 #if DEBUG
             // Assume cubemap model only has one opaque draw call
-            var drawCall = node.RenderableMeshes[0].DrawCallsOpaque[0];
+            var mesh = node.RenderableMeshes[0];
+            var drawCall = mesh.DrawCallsOpaque.Concat(mesh.DrawCallsBlended).First();
 
             foreach (var (paramName, initialValue) in drawCall.Material.Shader.Default.Material.FloatParams.OrderBy(x => x.Key))
             {
@@ -111,6 +101,43 @@ namespace GUI.Types.Renderer
 #endif
         }
 
+        private ModelSceneNode CreatePreviewModel()
+        {
+            var material = (Material)Resource.DataBlock;
+            ModelSceneNode node = null;
+
+            if (material.StringAttributes.TryGetValue("PreviewModel", out var previewModel))
+            {
+                var previewModelResource = GuiContext.FileLoader.LoadFileCompiled(previewModel);
+
+                if (previewModelResource != null)
+                {
+                    node = new ModelSceneNode(Scene, (Model)previewModelResource.DataBlock);
+                }
+            }
+
+            if (node == null)
+            {
+                var assembly = Assembly.GetExecutingAssembly();
+                using var stream = assembly.GetManifestResourceStream($"GUI.Utils.env_cubemap.vmdl_c");
+
+                using var cubemapResource = new ValveResourceFormat.Resource()
+                {
+                    FileName = "env_cubemap.vmdl_c"
+                };
+                cubemapResource.Read(stream);
+
+                node = new ModelSceneNode(Scene, (Model)cubemapResource.DataBlock);
+            }
+
+            foreach (var renderable in node.RenderableMeshes)
+            {
+                renderable.SetMaterialForMaterialViewer(Resource);
+            }
+
+            return node;
+        }
+
         private void OnShadersButtonClick(object s, EventArgs e)
         {
             var material = (Material)Resource.DataBlock;
@@ -151,6 +178,11 @@ namespace GUI.Types.Renderer
 
         private void AddShaderButton()
         {
+            if (Tabs == null)
+            {
+                return; // Will be null when previewing a file
+            }
+
             var button = new Button
             {
                 Text = "Open shader zframe",
@@ -165,10 +197,10 @@ namespace GUI.Types.Renderer
         protected override void InitializeControl()
         {
             AddRenderModeSelectionControl();
-            AddShaderButton();
 
             ParamsTable = new TableLayoutPanel
             {
+                Dock = DockStyle.Top,
                 AutoScroll = true,
                 Width = 220,
                 Height = 300,

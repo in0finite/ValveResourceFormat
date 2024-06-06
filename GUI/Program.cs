@@ -13,7 +13,7 @@ namespace GUI
         /// The main entry point for the application.
         /// </summary>
         [STAThread]
-        internal static void Main()
+        internal static void Main(string[] args)
         {
             AppDomain.CurrentDomain.UnhandledException += UnhandledException;
             Application.ThreadException += ThreadException;
@@ -26,7 +26,7 @@ namespace GUI
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 
-            MainForm = new MainForm();
+            MainForm = new MainForm(args);
             Application.Run(MainForm);
         }
 
@@ -45,7 +45,7 @@ namespace GUI
             Log.Error(nameof(Program), exception.ToString());
 
             MessageBox.Show(
-                $"{exception.Message}{Environment.NewLine}{Environment.NewLine}See console for more information.{Environment.NewLine}{Environment.NewLine}Try using latest unstable build to see if the issue persists.{Environment.NewLine}Source 2 Viewer Version: {Application.ProductVersion[..16]}",
+                $"{exception.Message}{Environment.NewLine}{Environment.NewLine}See console for more information.{Environment.NewLine}{Environment.NewLine}Try using latest dev build to see if the issue persists.{Environment.NewLine}Source 2 Viewer Version: {Application.ProductVersion[..16]}",
                 $"Unhandled exception: {exception.GetType()}",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error

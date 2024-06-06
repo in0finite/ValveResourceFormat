@@ -2,8 +2,8 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using GUI.Controls;
 using GUI.Forms;
+using GUI.Types.PackageViewer;
 using GUI.Utils;
 using SteamDatabase.ValvePak;
 using ValveResourceFormat.IO;
@@ -22,7 +22,7 @@ namespace GUI.Types.Exporter
 
         public static void ExtractFileFromStream(string fileName, Stream stream, VrfGuiContext vrfGuiContext, bool decompile)
         {
-            if (decompile && fileName.EndsWith("_c", StringComparison.Ordinal))
+            if (decompile && fileName.EndsWith(GameFileLoader.CompiledFileSuffix, StringComparison.Ordinal))
             {
                 var exportData = new ExportData
                 {
@@ -59,10 +59,19 @@ namespace GUI.Types.Exporter
                         filter = $"{filter}|{gltfFilter}|{glbFilter}";
                     }
 
+                    var fileNameForSave = Path.GetFileNameWithoutExtension(fileName);
+
+                    if (Path.GetExtension(fileName) == ".vmap_c")
+                    {
+                        // When exporting a vmap, suggest saving with a suffix like de_dust2_d,
+                        // to reduce conflicts when users end up recompiling the map with the same name as it exists in the game
+                        fileNameForSave += "_d";
+                    }
+
                     using var dialog = new SaveFileDialog
                     {
                         Title = "Choose where to save the file",
-                        FileName = Path.GetFileNameWithoutExtension(fileName),
+                        FileName = fileNameForSave,
                         InitialDirectory = Settings.Config.SaveDirectory,
                         DefaultExt = extension,
                         Filter = filter,
@@ -119,6 +128,16 @@ namespace GUI.Types.Exporter
             }
             else
             {
+                if (decompile && FileExtract.TryExtractNonResource(stream, fileName, out var content))
+                {
+                    var extension = Path.GetExtension(content.FileName);
+                    fileName = Path.ChangeExtension(fileName, extension);
+                    stream.Dispose();
+
+                    stream = new MemoryStream(content.Data);
+                    content.Dispose();
+                }
+
                 using var dialog = new SaveFileDialog
                 {
                     Title = "Choose where to save the file",
@@ -143,7 +162,7 @@ namespace GUI.Types.Exporter
             }
         }
 
-        public static void ExtractFilesFromTreeNode(BetterTreeNode selectedNode, VrfGuiContext vrfGuiContext, bool decompile)
+        public static void ExtractFilesFromTreeNode(IBetterBaseItem selectedNode, VrfGuiContext vrfGuiContext, bool decompile)
         {
             if (!selectedNode.IsFolder)
             {
@@ -187,9 +206,9 @@ namespace GUI.Types.Exporter
             {
                 // When queuing files this way, it'll preserve the original tree
                 // which is probably unwanted behaviour? It works tho /shrug
-                foreach (ListViewItem item in items)
+                foreach (IBetterBaseItem item in items)
                 {
-                    extractDialog.QueueFiles((BetterTreeNode)item.Tag);
+                    extractDialog.QueueFiles(item);
                 }
 
                 extractDialog.Execute();
